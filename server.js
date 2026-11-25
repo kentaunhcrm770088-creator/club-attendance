@@ -447,7 +447,9 @@ const server = http.createServer(async (req, res) => {
   const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.css': 'text/css' };
   fs.readFile(filePath, (err, buf) => {
     if (err) { res.writeHead(404); return res.end('not found'); }
-    res.writeHead(200, { 'Content-Type': types[path.extname(filePath)] || 'application/octet-stream' });
+    const headers = { 'Content-Type': types[path.extname(filePath)] || 'application/octet-stream' };
+    if (file === 'index.html') headers['Cache-Control'] = 'no-store';
+    res.writeHead(200, headers);
     res.end(buf);
   });
 });
