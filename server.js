@@ -38,13 +38,14 @@ function sendJson(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(body);
 }
-function readBody(req) {
+function readBody(req, max = 1e6) {
   return new Promise((resolve) => {
     let b = '';
-    req.on('data', (c) => { b += c; if (b.length > 1e6) req.destroy(); });
+    req.on('data', (c) => { b += c; if (b.length > max) req.destroy(); });
     req.on('end', () => { try { resolve(JSON.parse(b || '{}')); } catch { resolve({}); } });
   });
 }
+const tmpImages = new Map();
 function authMember(req) {
   const h = req.headers.authorization || '';
   const token = h.startsWith('Bearer ') ? h.slice(7) : '';
@@ -415,7 +416,28 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { date: t, items: result });
     }
 
+    // 生成画像の一時アップロード（表示・保存用に実URLを返す）
+    if (p === '/api/image' && req.method === 'POST') {
+      const me = authMember(req); if (!me) return sendJson(res, 401, { error: 'ログインが必要です' });
+      const b = await readBody(req, 9e6);
+      const m = /^data:image\/png;base64,(.+)$/.exec(b.data || '');
+      if (!m) return sendJson(res, 400, { error: '画像データが不正です' });
+      for (const [k, v] of tmpImages) if (v.exp < Date.now()) tmpImages.delete(k);
+      const id = crypto.randomBytes(8).toString('hex');
+      tmpImages.set(id, { buf: Buffer.from(m[1], 'base64'), exp: Date.now() + 10 * 60 * 1000 });
+      return sendJson(res, 200, { url: '/img/' + id + '.png' });
+    }
+
     return sendJson(res, 404, { error: 'not found' });
+  }
+
+  // --- 一時画像の配信 ---
+  const imgMatch = /^\/img\/([a-f0-9]+)\.png$/.exec(p);
+  if (imgMatch && req.method === 'GET') {
+    const t = tmpImages.get(imgMatch[1]);
+    if (!t || t.exp < Date.now()) { res.writeHead(404); return res.end('not found'); }
+    res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
+    return res.end(t.buf);
   }
 
   // --- 静的ファイル（公開してよいファイルだけ） ---

@@ -187,7 +187,13 @@ window.downloadTablePng = (title, header, rows, filename, redTitle) => {
       x += colW[ci];
     });
   });
-  showImageOverlay(cv.toDataURL('image/png'), filename);
+  shareCanvasImage(cv, filename);
+};
+window.shareCanvasImage = async (cv, filename) => {
+  const dataUrl = cv.toDataURL('image/png');
+  let url = dataUrl;
+  try { const r = await api('/image', { method: 'POST', body: JSON.stringify({ data: dataUrl }) }); if (r && r.url) url = r.url; } catch {}
+  showImageOverlay(url, filename);
 };
 window.showImageOverlay = (dataUrl, filename) => {
   let ov = document.getElementById('imgOverlay');
@@ -234,7 +240,7 @@ window.downloadAllocPng = (info, cars, filename) => {
       x += colW[ci];
     }
   });
-  showImageOverlay(cv.toDataURL('image/png'), filename);
+  shareCanvasImage(cv, filename);
 };
 window.exportPractice = (detailJson, practice) => {
   const d = JSON.parse(decodeURIComponent(detailJson));
