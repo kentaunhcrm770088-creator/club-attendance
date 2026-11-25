@@ -187,10 +187,16 @@ window.downloadTablePng = (title, header, rows, filename, redTitle) => {
       x += colW[ci];
     });
   });
-  cv.toBlob((blob) => {
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-    a.download = filename; a.click();
-  }, 'image/png');
+  showImageOverlay(cv.toDataURL('image/png'), filename);
+};
+window.showImageOverlay = (dataUrl, filename) => {
+  let ov = document.getElementById('imgOverlay');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'imgOverlay'; ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:999;overflow:auto;padding:16px;text-align:center'; document.body.appendChild(ov); }
+  ov.innerHTML = '<div style="color:#fff;font-size:13px;margin:8px 0">画像を長押しすると写真に保存できます</div>'
+    + '<img src="' + dataUrl + '" style="max-width:100%;background:#fff">'
+    + '<div style="margin:14px 0"><a href="' + dataUrl + '" download="' + filename + '" style="color:#8fc1ff;font-size:14px">ダウンロード</a>'
+    + '　<button onclick="document.getElementById(\'imgOverlay\').style.display=\'none\'" style="padding:8px 18px;font-size:14px">閉じる</button></div>';
+  ov.style.display = 'block';
 };
 const depOrPin = (r) => r.transport === 'pin' ? 'ピン' : departureText(r);
 const carOrRide = (r) => r.transport === 'pin' ? '' : (r.transport === 'driver' || r.car) ? '車だし' : '同乗';
@@ -228,10 +234,7 @@ window.downloadAllocPng = (info, cars, filename) => {
       x += colW[ci];
     }
   });
-  cv.toBlob((blob) => {
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-    a.download = filename; a.click();
-  }, 'image/png');
+  showImageOverlay(cv.toDataURL('image/png'), filename);
 };
 window.exportPractice = (detailJson, practice) => {
   const d = JSON.parse(decodeURIComponent(detailJson));
