@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>部活出席管理</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1a7f4b">
+<style>
+* { box-sizing: border-box;}
+body { font-family: sans-serif; margin: 0; background: #f4f6f5; color: #222;}
+header { background: #1a7f4b; color: #fff; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;}
+header h1 { font-size: 17px; margin: 0;}
+header button { background: #fff; color: #1a7f4b; border: 0; border-radius: 6px; padding: 6px 10px;}
+main { max-width: 720px; margin: 0 auto; padding: 14px;}
+.card { background: #fff; border-radius: 10px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.08);}
+h2 { font-size: 15px; margin: 4px 0 10px;}
+input, select, textarea { width: 100%; padding: 9px; margin: 5px 0 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 15px;}
+button.primary { background: #1a7f4b; color: #fff; border: 0; border-radius: 8px; padding: 11px; width: 100%; font-size: 15px;}
+button.sub { background: #e8f3ec; color: #1a7f4b; border: 1px solid #1a7f4b; border-radius: 8px; padding: 8px 12px; margin: 4px 4px 4px 0;}
+.row { display: flex; gap: 8px;}.row > * { flex: 1;}
+.meta { color: #555; font-size: 13px;}
+table { width: 100%; border-collapse: collapse; font-size: 13px;}
+th, td { border-bottom: 1px solid #e3e3e3; padding: 6px 4px; text-align: left;}
+.tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap;}
+.tabs button { flex: 1; padding: 9px 4px; border-radius: 8px; border: 1px solid #1a7f4b; background: #fff; color: #1a7f4b; font-size: 13px;}
+.tabs button.on { background: #1a7f4b; color: #fff;}
+.err { color: #c0392b; font-size: 13px; min-height: 18px;}
+label { font-size: 13px; color: #444;}
+.chk { width: auto;}
+</style>
+</head>
+<body>
+<header><h1>🏸 部活出席管理</h1><span id="userBox"></span></header>
+<main>
+<!-- ログイン -->
+<section id="authView">
+<div class="card">
+<h2 id="authTitle">ログイン</h2>
+<label>名字</label><input id="authSurname" autocomplete="family-name">
+<label>名前</label><input id="authGiven" autocomplete="given-name">
+<label>パスワード（幹部だけ）</label><input id="authPass" type="password" autocomplete="current-password" placeholder="部員は入力いりません">
+<div id="roleRow" style="display:none">
+<label>役割</label>
+<select id="authRole"><option value="member">部員</option><option value="officer">幹部</option></select>
+<label>学年</label>
+<select id="authGrade"><option>1年</option><option>2年</option><option>3年</option><option selected>4年</option><option>5年</option><option>6年</option></select>
+</div>
+<div class="err" id="authErr"></div>
+<button class="primary" id="authBtn">ログイン</button>
+<p class="meta" style="text-align:center"><a href="#" id="authToggle">初めての方はこちら（新規登録）</a></p>
+</div>
+</section>
+
+<!-- 本体 -->
+<section id="appView" style="display:none">
+<div class="tabs">
+<button data-tab="practices" class="on">練習と回答</button>
+<button data-tab="today" id="todayTab">今日の出席一覧</button>
+<button data-tab="officer" id="officerTab" style="display:none">幹部メニュー</button>
+</div>
+
+<p class="meta" id="myInfo" style="padding:0 4px"></p>
+<div id="tab-practices"></div>
+
+<div id="tab-today" style="display:none">
+<div class="card">
+<h2>今日の出席一覧</h2>
+<div id="todayBody">読み込み中…</div>
+<button class="sub" id="copyToday">一覧をテキストでコピー</button>
+<button class="sub" id="csvToday">CSVでダウンロード</button>
+</div>
+</div>
+
+<div id="tab-officer" style="display:none">
+<div class="card">
+<h2>練習を登録</h2>
+<label>日付</label><input type="date" id="pDate">
+<div class="row"><div><label>開始</label><input type="time" id="pStart"></div><div><label>終了</label><input type="time" id="pEnd"></div></div>
+<label>場所</label><input id="pPlace" placeholder="春日体育館">
+<label>種類</label><select id="pType"><option>通常練</option><option>試合練</option><option>オフ練</option><option>その他</option></select>
+<label>回答期限</label><input type="datetime-local" id="pDeadline">
+<label>メモ</label><input id="pNote">
+<button class="primary" id="pCreate">登録する</button>
+<div class="err" id="pErr"></div>
+<button class="sub" id="weekNotify" style="margin-top:10px">来週分を作り終えたら通知する</button>
+<div class="err" id="weekMsg"></div>
+</div>
+<div class="card">
+<h2>車割を作成</h2>
+<label>練習</label><select id="allocPractice"></select>
+<div id="allocBody"></div>
+<button class="sub" id="allocAuto">自動割り振り</button>
+<button class="primary" id="allocSave">車割を保存</button>
+<div class="err" id="allocMsg"></div>
+</div>
+<div class="card">
+<h2>出席表の表示</h2>
+<label>練習</label><select id="sheetPractice"></select>
+<div id="sheetBody" style="margin-top:8px"></div>
+<button class="sub" id="sheetCsv">出席者リストを表で出力（CSV）</button>
+<button class="sub" id="sheetImg">出席者リストを画像でダウンロード</button>
+</div>
+<div class="card">
+<h2>色ごとの人数を見る</h2>
+<label>練習</label><select id="colorPractice"></select>
+<div id="colorBody" class="meta" style="margin-top:8px"></div>
+</div>
+<div class="card">
+<h2>練習の回答期限を変更</h2>
+<label>練習</label><select id="dlPractice"></select>
+<label>新しい回答期限</label><input type="datetime-local" id="dlValue">
+<button class="primary" id="dlSave">期限を保存</button>
+<div class="err" id="dlMsg"></div>
+</div>
+<div class="card">
+<h2>今月の出欠変更回数</h2>
+<div id="chgBody" class="meta">読み込み中…</div>
+</div>
+<div class="card">
+<h2>交通費計算</h2>
+<label>対象の月</label><input type="month" id="tcMonth">
+<label>その月のガソリン価格（円/L）</label><input type="number" id="tcGas" min="0" placeholder="例：170">
+<div id="tcGyms"></div>
+<button class="sub" id="tcSaveSettings">距離と価格を保存</button>
+<button class="primary" id="tcCalc">計算する</button>
+<div id="tcResult" style="margin-top:8px"></div>
+<div class="err" id="tcMsg"></div>
+</div>
+<div class="card">
+<h2>部員の役割・学年を変更</h2>
+<input id="roleSearch" placeholder="名前で検索" style="margin-bottom:8px">
+<div id="roleBody" style="max-height:320px;overflow-y:auto"></div>
+</div>
+<div class="card">
+<h2>変更リクエスト（期限後の出欠変更）</h2>
+<div id="crBody">読み込み中…</div>
+</div>
+</div>
+</section>
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+let token = localStorage.getItem('token') || '';
+let me = null, practices = [], members = [], registerMode = false;
+
+async function api(path, opts = {}) {
+const r = await fetch('/api' + path, {...opts, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token}});
+const j = await r.json().catch(() => ({}));
+if (!r.ok) throw new Error(j.error || 'エラー');
+return j;
+}
+const esc = (s) => String(s?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const lateEarlyText = (r) => r.lateEarly === 'late' ? '遅刻' : '';
+const transportText = (r) => r.status !== 'present' ? '' : (r.transport === 'driver' || r.car) ? '車出し' : r.transport === 'pin' ? 'ピン' : '同乗';
+const departureText = (r) => r.transport === 'pin' ? '' : r.departure === 'second' ? '後発' : '先発';
+const gradeNum = (g) => { const m = String(g || '').match(/(\d+)/); return m ? parseInt(m[1]) : 0; };
+const sortByGradeDesc = (rs) => rs.slice().sort((a, b) => gradeNum(b.member.grade) - gradeNum(a.member.grade));
+const colorCounts = (rs) => { const cnt = {}; rs.filter((r) => r.status === 'present' && r.color).forEach((r) => { cnt[r.color] = (cnt[r.color] || 0) + 1; });
+  const keys = Object.keys(cnt); return keys.length ? keys.map((k) => `${k} ${cnt[k]}人`).join('　') : 'まだなし'; };
+window.downloadTablePng = (title, header, rows, filename, redTitle) => {
+  const scale = 2, pad = 16, rowH = 34, titleH = 44, font = '16px sans-serif';
+  const meas = document.createElement('canvas').getContext('2d'); meas.font = font;
+  const all = [header, ...rows];
+  const colW = header.map((_, i) => Math.max(...all.map((r) => meas.measureText(String(r[i] ?? '')).length), meas.measureText(title).length / header.length) + pad * 2);
+  const width = colW.reduce((a, b) => a + b, 0);
+  const height = titleH + rowH * all.length + pad;
+  const cv = document.createElement('canvas'); cv.width = width * scale; cv.height = height * scale;
+  const ctx = cv.getContext('2d'); ctx.scale(scale, scale);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, width, height);
+  if (redTitle) {
+    ctx.fillStyle = '#d32f2f'; ctx.font = 'bold 18px sans-serif'; ctx.fillText(title, pad, 29);
+  } else {
+    ctx.fillStyle = '#1a7f4b'; ctx.fillRect(0, 0, width, titleH);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 18px sans-serif'; ctx.fillText(title, pad, 29);
+  }
+  ctx.font = font;
+  all.forEach((r, ri) => {
+    const y = titleH + ri * rowH;
+    if (ri === 0) { ctx.fillStyle = '#e8f5ee'; ctx.fillRect(0, y, width, rowH); }
+    ctx.strokeStyle = '#cccccc'; ctx.strokeRect(0, y, width, rowH);
+    let x = 0;
+    r.forEach((cell, ci) => {
+      ctx.strokeRect(x, y, colW[ci], rowH);
+      ctx.fillStyle = '#222222'; ctx.font = ri === 0 ? 'bold 16px sans-serif' : font;
+      ctx.fillText(String(cell ?? ''), x + pad, y + 23);
+      x += colW[ci];
+    });
+  });
+  cv.toBlob((blob) => {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = filename; a.click();
+  }, 'image/png');
+};
+const depOrPin = (r) => r.transport === 'pin' ? 'ピン' : departureText(r);
+const carOrRide = (r) => r.transport === 'pin' ? '' : (r.transport === 'driver' || r.car) ? '車だし' : '同乗';
+const attendeeRows = (d) => sortByGradeDesc(d.responses.filter((r) => r.status === 'present'))
+  .map((r) => [r.member.name, r.member.grade || '', depOrPin(r), carOrRide(r)]);
+const surnameOf = (n) => String(n || '').split(/[\s　]+/)[0];
+const surnameOfMember = (m) => m.surname || surnameOf(m.name);
+const givenOfMember = (m) => m.givenName || (String(m.name || '').split(/[\s　]+/)[1] || '');
+const allocLabel = (m, all) => {
+  const sn = surnameOfMember(m);
+  const dup = all.some((o) => o.id !== m.id && surnameOfMember(o) === sn);
+  const g = givenOfMember(m);
+  return dup && g ? `${sn}（${g.charAt(0)}）` : sn;
+};
+window.downloadAllocPng = (info, cars, filename) => {
+  const scale = 2, pad = 16, rowH = 36, titleH = 44, font = '16px sans-serif';
+  const grid = cars;
+  const cols = Math.max(...grid.map((r) => r.length));
+  const meas = document.createElement('canvas').getContext('2d'); meas.font = font;
+  const colW = Array.from({ length: cols }, (_, i) => Math.max(...grid.map((r) => meas.measureText(r[i] || '').length), 60) + pad * 2);
+  const width = colW.reduce((a, b) => a + b, 0);
+  const height = titleH + rowH * grid.length + pad;
+  const cv = document.createElement('canvas'); cv.width = width * scale; cv.height = height * scale;
+  const ctx = cv.getContext('2d'); ctx.scale(scale, scale);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = '#d32f2f'; ctx.font = 'bold 18px sans-serif'; ctx.fillText(info, pad, 29);
+  ctx.font = font;
+  grid.forEach((r, ri) => {
+    const y = titleH + ri * rowH;
+    let x = 0;
+    for (let ci = 0; ci < cols; ci++) {
+      if (ci === 0) { ctx.fillStyle = '#ffff00'; ctx.fillRect(x, y, colW[ci], rowH); }
+      ctx.strokeStyle = '#999999'; ctx.strokeRect(x, y, colW[ci], rowH);
+      ctx.fillStyle = '#222222'; ctx.fillText(r[ci] || '', x + pad, y + 24);
+      x += colW[ci];
+    }
+  });
+  cv.toBlob((blob) => {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = filename; a.click();
+  }, 'image/png');
+};
+window.exportPractice = (detailJson, practice) => {
+  const d = JSON.parse(decodeURIComponent(detailJson));
+  const pr = typeof practice === 'object' ? practice : null;
+  const rows = attendeeRows(d);
+  const info = pr ? `${pr.date}　${pr.place}　${pr.type}　${rows.length}人　${pr.start}〜${pr.end}` : String(practice);
+  let csv = `"${info}"\n名前,学年,先発or後発orピン,車だしor同乗\n` +
+    rows.map((r) => r.map((c) => `"${c}"`).join(',')).join('\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = `出席者リスト_${pr ? pr.date + '_' + pr.place : practice}.csv`; a.click();
+};
+
+// --- 認証 ---
+$('#authToggle').onclick = (e) => { e.preventDefault(); registerMode =!registerMode;
+$('#authTitle').textContent = registerMode? '新規登録': 'ログイン';
+$('#authBtn').textContent = registerMode? '登録する': 'ログイン';
+$('#roleRow').style.display = registerMode? 'block': 'none';
+$('#authToggle').textContent = registerMode? 'ログインはこちら': '初めての方はこちら（新規登録）';};
+const pDateEl = $('#pDate');
+if (pDateEl) pDateEl.onchange = () => {
+  if (!pDateEl.value) return;
+  const dow = new Date(pDateEl.value + 'T00:00:00').getDay();
+  if (dow === 6) { $('#pStart').value = '09:00'; $('#pEnd').value = '13:00'; }
+  else { $('#pStart').value = '18:00'; $('#pEnd').value = '22:00'; }
+  if (dow === 1 || dow === 3 || dow === 6) $('#pType').value = '通常練';
+  else if (dow === 4) $('#pType').value = '試合練';
+};
+$('#authBtn').onclick = async () => {
+$('#authErr').textContent = '';
+try {
+const body = { surname: $('#authSurname').value.trim(), givenName: $('#authGiven').value.trim(), password: $('#authPass').value, role: $('#authRole').value, grade: $('#authGrade').value};
+const j = await api(registerMode? '/register': '/login', { method: 'POST', body: JSON.stringify(body)});
+token = j.token; localStorage.setItem('token', token); me = j.member; showApp();
+} catch (e) { $('#authErr').textContent = e.message;}
+};
+async function logout() { try { await api('/logout', { method: 'POST'});} catch {} token = ''; localStorage.removeItem('token'); location.reload();}
+window.enablePush = async () => {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) { alert('この端末・ブラウザではプッシュ通知が使えません。iPhoneの場合はホーム画面に追加したアプリから開いてください'); return; }
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { alert('通知が許可されませんでした'); return; }
+    const reg = await navigator.serviceWorker.ready;
+    const keyRes = await api('/push/key');
+    const key = Uint8Array.from(atob(keyRes.publicKey.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(keyRes.publicKey.length / 4) * 4, '=')), (c) => c.charCodeAt(0));
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    await api('/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: sub.toJSON() }) });
+    alert('通知をONにしました');
+  } catch (e) { alert('通知の設定に失敗しました: ' + e.message); }
+};
+
+async function showApp() {
+try { const j = await api('/me'); me = j.member; } catch {}
+$('#authView').style.display = 'none'; $('#appView').style.display = 'block';
+$('#userBox').innerHTML = `${esc(me.name)}（${me.role === 'officer'? '幹部': '部員'}） <button onclick="enablePush()">通知をON</button> <button onclick="logout()">ログアウト</button>`;
+const info = document.getElementById('myInfo');
+if (info) info.innerHTML = `今月の出欠変更は <b>${me.changesThisMonth ?? 0}回</b> です（変更はなるべく少なくお願いします）<br>車の燃費（km/L）：<input id="myFuel" type="number" step="0.1" min="1" max="100" value="${me.fuelEconomy || ''}" style="width:80px"> <button class="sub" id="myFuelSave">保存</button> <span id="myFuelMsg"></span>`;
+const fsBtn = document.getElementById('myFuelSave');
+if (fsBtn) fsBtn.onclick = async () => {
+  try { await api('/me/fuel', { method: 'POST', body: JSON.stringify({ fuelEconomy: $('#myFuel').value }) }); $('#myFuelMsg').textContent = '保存しました'; }
+  catch (e) { $('#myFuelMsg').textContent = e.message; }
+};
+if (me.role === 'officer') { $('#officerTab').style.display = 'block'; } else { $('#todayTab').style.display = 'none'; }
+await refresh();
+}
+document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
+document.querySelectorAll('.tabs button').forEach((x) => x.classList.remove('on')); b.classList.add('on');
+['practices', 'today', 'officer'].forEach((t) => $('#tab-' + t).style.display = t === b.dataset.tab? 'block': 'none');
+if (b.dataset.tab === 'today') loadToday();
+if (b.dataset.tab === 'officer') { loadAllocPractices(); loadOfficerExtras(); }
+});
+
+async function refresh() {
+const [p, m] = await Promise.all([api('/practices'), api('/members')]);
+practices = p.practices; members = m.members;
+renderPractices();
+}
+
+// --- 練習と回答 ---
+async function renderPractices() {
+const box = $('#tab-practices');
+if (!practices.length) { box.innerHTML = '<div class="card">練習はまだ登録されていません。</div>'; return;}
+box.innerHTML = '';
+for (const pr of practices) {
+const d = await api('/practices/' + pr.id + '/detail');
+const mine = d.responses.find((r) => r.memberId === me.id);
+const present = d.responses.filter((r) => r.status === 'present');
+const cars = present.filter((r) => r.car);
+const locked = me.role !== 'officer' && pr.deadline && new Date() > new Date(pr.deadline);
+const card = document.createElement('div'); card.className = 'card';
+card.innerHTML = `
+<h2>${esc(pr.date)} ${esc(pr.start)}〜${esc(pr.end)}　${esc(pr.place)}（${esc(pr.type)}）</h2>
+<p class="meta">${pr.deadline? '回答期限：' + esc(pr.deadline.replace('T', ' ')) + '　': ''}${esc(pr.note || '')}</p>
+${me.role === 'officer' ? `<p class="meta">出席 ${present.length}人 / 欠席 ${d.responses.length - present.length}人 / 車 ${cars.length}台（${cars.reduce((a, r) => a + (r.seats || 0), 0)}人まで乗車可）/ 未回答 ${d.unanswered.length}人</p>` : ''}
+${locked ? `
+<p class="meta">回答期限を過ぎています${mine ? '（現在の回答：' + (mine.status === 'present' ? '出席' : '欠席') + '）' : ''}。変更したい場合はこちらからリクエストを送ってください。</p>
+<label>変更後の出欠</label><select id="cr-st-${pr.id}"><option value="present">出席に変更</option><option value="absent">欠席に変更</option></select>
+<label>変更の理由・連絡事項</label><input id="cr-msg-${pr.id}" placeholder="例：用事が入ったため欠席に変えたいです">
+<button class="primary" data-changereq="${pr.id}">変更リクエストを送る</button>
+${renderAllocation(d)}
+` : `
+<div class="row">
+<div><label>出欠</label><select id="st-${pr.id}"><option value="present">出席</option><option value="absent">欠席</option></select></div>
+<div><label>遅刻（ピンの人だけ）</label><select id="le-${pr.id}"><option value="none">通常通り</option><option value="late">遅刻</option></select></div>
+</div>
+<div class="row">
+<div><label>車</label><select id="tp-${pr.id}"><option value="passenger">同乗</option><option value="driver">車出し</option><option value="pin">ピン（自分で行く）</option></select><input type="number" id="seats-${pr.id}" min="0" placeholder="乗車人数（車出しのとき）" value="${mine && mine.car? mine.seats: ''}"></div>
+<div><label>出発（ピン以外）</label><select id="dep-${pr.id}"><option value="first">先発（17:30発）</option><option value="second">後発（18:30発）</option></select><span class="meta">※後発に間に合わない遅刻はピン扱いになります</span></div>
+</div>
+<label>色分け</label><select id="col-${pr.id}"><option value="">選択</option><option>🟡</option><option>🟠</option><option>🟦</option><option>🟣</option><option>🟥</option><option>🩶</option><option>🟢</option><option>🤍</option><option>💗</option><option>🩵</option></select>
+<label>コメント</label><input id="cm-${pr.id}" value="${mine? esc(mine.comment): ''}">
+<button class="primary" data-answer="${pr.id}">${mine? '回答を更新する': '回答する'}</button>
+${me.role === 'officer' ? `
+<details style="margin-top:10px"><summary class="meta">みんなの回答・車割を見る</summary>
+<p class="meta">色分け別（出席）：${colorCounts(d.responses)}</p>
+<button class="sub" data-export="${pr.id}">出席者リストを表で出力（名前・学年・車）</button>
+<button class="sub" data-imgexport="${pr.id}">出席者リストを画像でダウンロード</button>
+<button class="sub" data-allocimg="${pr.id}">車割を画像でダウンロード</button>
+<table><tr><th>名前</th><th>学年</th><th>出欠</th><th>車</th><th>発</th><th>色分け</th><th>遅刻早退</th><th>コメント</th></tr>
+${sortByGradeDesc(d.responses).map((r) => `<tr><td>${esc(r.member.name)}</td><td>${esc(r.member.grade || '')}</td><td>${r.status === 'present'? '出席': '欠席'}</td><td>${transportText(r)}</td><td>${departureText(r)}</td><td>${esc(r.color || '')}</td><td>${lateEarlyText(r)}</td><td>${esc(r.comment)}</td></tr>`).join('')}
+</table>
+<button class="sub opt-toggle" style="font-size:13px;padding:4px 10px">▽ オプション（2部練・新歓練）</button>
+<div class="opt-body" style="display:none">
+<div id="split-${pr.id}"></div>
+<div id="shinkan-${pr.id}"></div>
+</div>
+${renderAllocation(d)}
+${d.unanswered.length? '<p class="meta">未回答：' + d.unanswered.map((u) => esc(u.name)).join('、') + '</p>': ''}
+</details>` : renderAllocation(d)}
+`}`;
+box.appendChild(card);
+if (me.role === 'officer') { renderSplitTools(pr, d); renderShinkanTools(pr, d); }
+if (mine && !locked) { $('#st-' + pr.id).value = mine.status; $('#le-' + pr.id).value = mine.lateEarly; $('#tp-' + pr.id).value = mine.transport || (mine.car ? 'driver' : 'passenger'); $('#dep-' + pr.id).value = mine.departure || 'first'; $('#col-' + pr.id).value = mine.color || ''; }
+}
+box.querySelectorAll('[data-answer]').forEach((b) => b.onclick = async () => {
+const id = b.dataset.answer;
+try {
+await api('/responses', { method: 'POST', body: JSON.stringify({
+practiceId: id, status: $('#st-' + id).value, transport: $('#tp-' + id).value, departure: $('#dep-' + id).value, color: $('#col-' + id).value,
+seats: $('#seats-' + id).value, lateEarly: $('#le-' + id).value, comment: $('#cm-' + id).value})});
+refresh();
+} catch (e) { alert(e.message);}
+});
+box.querySelectorAll('.opt-toggle').forEach((b) => b.onclick = () => {
+  const body = b.nextElementSibling;
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : '';
+  b.textContent = (open ? '▽' : '△') + ' オプション（2部練・新歓練）';
+});
+box.querySelectorAll('[data-imgexport]').forEach((b) => b.onclick = async () => {
+  const det = await api('/practices/' + b.dataset.imgexport + '/detail');
+  const pr2 = practices.find((x) => x.id === b.dataset.imgexport);
+  const rows = attendeeRows(det);
+  const info = `${pr2.date}　${pr2.place}　${pr2.type}　${rows.length}人　${pr2.start}〜${pr2.end}`;
+  downloadTablePng(info, ['名前', '学年', '先発or後発orピン', '車だしor同乗'], rows, `出席者リスト_${pr2.date}.png`, true);
+});
+box.querySelectorAll('[data-allocimg]').forEach((b) => b.onclick = async () => {
+  const det = await api('/practices/' + b.dataset.allocimg + '/detail');
+  const pr2 = practices.find((x) => x.id === b.dataset.allocimg);
+  const alloc = det.allocation || {};
+  const byId = (id) => members.find((m) => m.id === id) || { id, name: '?' };
+  const entries = Object.entries(alloc);
+  if (!entries.length) { alert('まだ車割が保存されていません'); return; }
+  const allParts = entries.flatMap(([drv, ps]) => [byId(drv), ...ps.map(byId)]);
+  const cars = entries.map(([drv, ps]) => [allocLabel(byId(drv), allParts), ...ps.map((pid) => allocLabel(byId(pid), allParts))]);
+  downloadAllocPng(`${pr2.date}　${pr2.place}　${pr2.type}　車割`, cars, `車割_${pr2.date}.png`);
+});
+box.querySelectorAll('[data-export]').forEach((b) => b.onclick = async () => {
+  const det = await api('/practices/' + b.dataset.export + '/detail');
+  const pr2 = practices.find((x) => x.id === b.dataset.export);
+  exportPractice(encodeURIComponent(JSON.stringify(det)), pr2 || 'practice');
+});
+box.querySelectorAll('[data-changereq]').forEach((b) => b.onclick = async () => {
+const id = b.dataset.changereq;
+try {
+await api('/change-requests', { method: 'POST', body: JSON.stringify({
+practiceId: id, desiredStatus: $('#cr-st-' + id).value, message: $('#cr-msg-' + id).value})});
+alert('変更リクエストを送りました');
+refresh();
+} catch (e) { alert(e.message);}
+});
+}
+function renderAllocation(d) {
+const alloc = d.allocation || {};
+const drivers = Object.keys(alloc);
+if (!drivers.length) return '';
+const name = (id) => (members.find((m) => m.id === id) || {}).name || '?';
+return '<p class="meta"><b>車割</b></p>' + drivers.map((drv) =>
+`<p class="meta">🚗 ${esc(name(drv))}号車：${(alloc[drv] || []).map((id) => esc(name(id))).join('、') || '同乗者なし'}</p>`).join('');
+}
+
+// --- 2部練・新歓練（幹部） ---
+const COLORS = ['🟡','🟠','🟦','🟣','🟥','🩶','🟢','🤍','💗','🩵'];
+function splitGroupsFor(pr, d) {
+  const present = sortByGradeDesc(d.responses.filter((r) => r.status === 'present'));
+  return (pr.split || []).map((g) => ({ ...g, people: present.filter((r) => g.colors.includes(r.color || '')) }));
+}
+function renderSplitTools(pr, d) {
+  const el = document.getElementById('split-' + pr.id); if (!el) return;
+  const sp = pr.split;
+  const firstColors = sp && sp[0] ? sp[0].colors : [];
+  let h = '<h4>2部練</h4>';
+  h += `<p class="meta">前半の色を選んでください（選ばなかった色は自動で後半になります）</p>`;
+  h += COLORS.map((c) => `<label style="margin-right:6px"><input type="checkbox" class="chk sp-col" value="${c}" ${firstColors.includes(c) ? 'checked' : ''}> ${c}</label>`).join('');
+  h += `<div class="row"><div><label>前半 開始</label><input type="time" id="sp-s1" value="${sp && sp[0] ? sp[0].start : '18:00'}"></div>
+  <div><label>前半 終了</label><input type="time" id="sp-e1" value="${sp && sp[0] ? sp[0].end : '20:00'}"></div>
+  <div><label>後半 開始</label><input type="time" id="sp-s2" value="${sp && sp[1] ? sp[1].start : '20:00'}"></div>
+  <div><label>後半 終了</label><input type="time" id="sp-e2" value="${sp && sp[1] ? sp[1].end : '22:00'}"></div></div>`;
+  h += `<button class="sub" id="sp-save">2部練の表を作る</button> `;
+  if (sp) h += `<button class="sub" id="sp-clear">2部練をやめる</button> <button class="sub" id="sp-export">2部練の表を出力</button>`;
+  if (sp) {
+    splitGroupsFor(pr, d).forEach((g) => {
+      h += `<p class="meta"><b>${esc(g.label)}（${esc(g.start)}〜${esc(g.end)}）${g.people.length}人</b></p>`;
+      h += '<table><tr><th>名前</th><th>学年</th><th>色分け</th></tr>' +
+        g.people.map((r) => `<tr><td>${esc(r.member.name)}</td><td>${esc(r.member.grade || '')}</td><td>${esc(r.color || '')}</td></tr>`).join('') + '</table>';
+    });
+  }
+  el.innerHTML = h;
+  el.querySelector('#sp-save').onclick = async () => {
+    const cols = Array.from(el.querySelectorAll('.sp-col')).filter((c) => c.checked).map((c) => c.value);
+    const groups = [
+      { label: '前半', start: el.querySelector('#sp-s1').value, end: el.querySelector('#sp-e1').value, colors: cols },
+      { label: '後半', start: el.querySelector('#sp-s2').value, end: el.querySelector('#sp-e2').value, colors: COLORS.filter((c) => !cols.includes(c)).concat(['']) },
+    ];
+    await api('/practices/' + pr.id + '/split', { method: 'POST', body: JSON.stringify({ groups }) });
+    refresh();
+  };
+  const clr = el.querySelector('#sp-clear');
+  if (clr) clr.onclick = async () => { await api('/practices/' + pr.id + '/split', { method: 'POST', body: JSON.stringify({ groups: [] }) }); refresh(); };
+  const exp = el.querySelector('#sp-export');
+  if (exp) exp.onclick = () => {
+    let csv = '時間帯,名前,学年,色分け\n';
+    splitGroupsFor(pr, d).forEach((g) => g.people.forEach((r) => { csv += `"${g.label} ${g.start}〜${g.end}","${r.member.name}","${r.member.grade || ''}","${r.color || ''}"\n`; }));
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `2部練_${pr.date}.csv`; a.click();
+  };
+}
+function renderShinkanTools(pr, d) {
+  const el = document.getElementById('shinkan-' + pr.id); if (!el) return;
+  const present = sortByGradeDesc(d.responses.filter((r) => r.status === 'present'));
+  const cur = pr.shinkan || [];
+  let h = '<h4>新歓練への派遣</h4><p class="meta">派遣する人を選んでください</p>';
+  h += present.map((r) => `<label style="display:block"><input type="checkbox" class="chk sk-chk" value="${r.memberId}" ${cur.includes(r.memberId) ? 'checked' : ''}> ${esc(r.member.name)}（${esc(r.member.grade || '')}）</label>`).join('');
+  h += `<button class="sub" id="sk-save">派遣を保存</button>`;
+  if (cur.length) {
+    const names = present.filter((r) => cur.includes(r.memberId));
+    h += `<p class="meta">派遣中：${names.map((r) => esc(r.member.name)).join('、')}</p>`;
+  }
+  el.innerHTML = h;
+  el.querySelector('#sk-save').onclick = async () => {
+    const ids = Array.from(el.querySelectorAll('.sk-chk')).filter((c) => c.checked).map((c) => c.value);
+    await api('/practices/' + pr.id + '/shinkan', { method: 'POST', body: JSON.stringify({ memberIds: ids }) });
+    refresh();
+  };
+}
+
+// --- 今日の一覧 ---
+let todayText = '', todayCsv = '';
+async function loadToday() {
+const j = await api('/today');
+const box = $('#todayBody');
+if (!j.items.length) { box.innerHTML = '今日の練習はありません。'; todayText = ''; todayCsv = ''; return;}
+todayText = ''; todayCsv = '練習,名前,出欠,車,遅刻早退,コメント\n';
+box.innerHTML = j.items.map((it) => {
+const title = `${it.practice.date} ${it.practice.start}〜${it.practice.end} ${it.practice.place}（${it.practice.type}）`;
+todayText += `\n`;
+const rows = it.responses.map((r) => {
+todayText += `${r.member.name}：${r.status === 'present'? '出席': '欠席'}${r.car? ' 車○（' + r.seats + '人）': ''}${lateEarlyText(r)? ' ' + lateEarlyText(r): ''}${r.comment? ' ' + r.comment: ''}\n`;
+todayCsv += `"${title}","${r.member.name}","${r.status === 'present'? '出席': '欠席'}","${r.car? '○（' + r.seats + '人）': ''}","${lateEarlyText(r)}","${(r.comment || '').replace(/"/g, '""')}"\n`;
+return `<tr><td>${esc(r.member.name)}</td><td>${r.status === 'present'? '出席': '欠席'}</td><td>${r.car? '○（' + r.seats + '人）': ''}</td><td>${lateEarlyText(r)}</td><td>${esc(r.comment)}</td></tr>`;
+}).join('');
+const fakeDetail = { allocation: it.allocation};
+return `<h2>${esc(title)}</h2><table><tr><th>名前</th><th>出欠</th><th>車</th><th>遅刻早退</th><th>コメント</th></tr>${rows}</table>` + renderAllocation(fakeDetail);
+}).join('');
+}
+$('#copyToday').onclick = async () => { if (todayText) { await navigator.clipboard.writeText(todayText); alert('コピーしました');}};
+$('#csvToday').onclick = () => {
+const blob = new Blob(['\ufeff' + todayCsv], { type: 'text/csv'});
+const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'today_attendance.csv'; a.click();
+};
+
+// --- 幹部：練習登録 ---
+const wn = $('#weekNotify');
+if (wn) wn.onclick = async () => {
+  try {
+    const r = await api('/notify-week', { method: 'POST', body: '{}' });
+    $('#weekMsg').textContent = `通知しました（${r.count}件の練習）`;
+  } catch (e) { $('#weekMsg').textContent = e.message; }
+};
+$('#pCreate').onclick = async () => {
+$('#pErr').textContent = '';
+try {
+await api('/practices', { method: 'POST', body: JSON.stringify({
+date: $('#pDate').value, start: $('#pStart').value, end: $('#pEnd').value, place: $('#pPlace').value,
+type: $('#pType').value, deadline: $('#pDeadline').value, note: $('#pNote').value})});
+refresh(); alert('登録しました');
+} catch (e) { $('#pErr').textContent = e.message;}
+};
+
+// --- 幹部：車割 ---
+let allocDetail = null;
+async function loadAllocPractices() {
+const sel = $('#allocPractice');
+sel.innerHTML = practices.map((p) => `<option value="${p.id}">${esc(p.date)} ${esc(p.place)}</option>`).join('');
+if (practices.length) loadAlloc();
+}
+$('#allocPractice').onchange = loadAlloc;
+let allocSelected = null;
+async function loadAlloc() {
+const id = $('#allocPractice').value; if (!id) return;
+allocDetail = await api('/practices/' + id + '/detail');
+const present = allocDetail.responses.filter((r) => r.status === 'present');
+const drivers = present.filter((r) => r.car);
+const usedDrivers = Object.keys(allocDetail.allocation || {});
+allocSelected = new Set(usedDrivers.length ? usedDrivers : drivers.map((d) => d.memberId));
+$('#allocBody').innerHTML = '';
+renderAlloc();
+}
+function allocPool() {
+  const present = allocDetail.responses.filter((r) => r.status === 'present');
+  // 車出し希望でも選ばれなかった人は同乗者になる
+  return present.filter((r) => r.transport !== 'pin' && !allocSelected.has(r.memberId));
+}
+function renderAlloc() {
+const present = allocDetail.responses.filter((r) => r.status === 'present');
+const drivers = present.filter((r) => r.car);
+const passengers = allocPool();
+const cur = collectAllocSafe();
+let needs = '';
+['first', 'second'].forEach((dep) => {
+  const riders = passengers.filter((p) => (p.departure || 'first') === dep).length;
+  const selD = drivers.filter((d) => allocSelected.has(d.memberId) && (d.departure || 'first') === dep);
+  const cap = selD.reduce((a, d) => a + (d.seats || 0), 0);
+  if (!riders && !selD.length) return;
+  const shortage = riders - cap;
+  const need = shortage > 0 ? Math.ceil(shortage / 4) : 0;
+  needs += `<p class="meta"><b>${dep === 'first' ? '先発' : '後発'}：同乗する人 ${riders}人／選んだ車の定員 ${cap}人${need ? `／<span style="color:#d32f2f">あと${need}台必要</span>` : '／足りています'}</b></p>`;
+});
+$('#allocBody').innerHTML = drivers.length? '<p class="meta">出す車を選んでください（選ばれなかった車出し希望者は同乗者になります）</p>' + needs + drivers.map((d) => `
+<p class="meta"><label><input type="checkbox" class="chk driver-use" data-driver="${d.memberId}" ${allocSelected.has(d.memberId) ? 'checked' : ''}> <b>🚗 ${esc(d.member.name)}号車（${departureText(d)}・${d.seats}人まで）</b></label></p>
+${allocSelected.has(d.memberId) ? passengers.map((p) => `<label><input type="checkbox" class="chk alloc-chk" data-driver="${d.memberId}" data-pass="${p.memberId}" ${(cur[d.memberId] || []).includes(p.memberId)? 'checked': ''}> ${esc(p.member.name)}（${departureText(p)}${p.car ? '・車出し希望' : ''}）</label><br>`).join('') : ''}
+`).join(''): '<p class="meta">車を出せる出席者がいません。</p>';
+document.querySelectorAll('.driver-use').forEach((c) => c.onchange = () => {
+  if (c.checked) allocSelected.add(c.dataset.driver); else allocSelected.delete(c.dataset.driver);
+  renderAlloc();
+});
+}
+function collectAllocSafe() {
+  const out = {};
+  document.querySelectorAll('.alloc-chk').forEach((c) => { if (c.checked) { (out[c.dataset.driver] = out[c.dataset.driver] || []).push(c.dataset.pass); } });
+  return Object.keys(out).length ? out : (allocDetail.allocation || {});
+}
+function collectAlloc() {
+const out = {};
+document.querySelectorAll('.alloc-chk').forEach((c) => { if (c.checked && allocSelected && allocSelected.has(c.dataset.driver)) { (out[c.dataset.driver] = out[c.dataset.driver] || []).push(c.dataset.pass);}});
+if (allocSelected) allocSelected.forEach((id) => { if (!(id in out)) out[id] = []; });
+return out;
+}
+$('#allocAuto').onclick = () => {
+if (!allocDetail) return;
+const present = allocDetail.responses.filter((r) => r.status === 'present');
+const drivers = present.filter((r) => r.car && allocSelected.has(r.memberId));
+const passengers = allocPool();
+const out = {}; drivers.forEach((d) => { out[d.memberId] = []; });
+['first', 'second'].forEach((dep) => {
+const ds = drivers.filter((x) => (x.departure || 'first') === dep);
+passengers.filter((p) => (p.departure || 'first') === dep).forEach((p) => {
+const target = ds.filter((x) => out[x.memberId].length < x.seats).sort((a, b) => out[a.memberId].length - out[b.memberId].length)[0];
+if (target) out[target.memberId].push(p.memberId);
+});
+});
+document.querySelectorAll('.alloc-chk').forEach((c) => { c.checked = (out[c.dataset.driver] || []).includes(c.dataset.pass);});
+};
+$('#allocSave').onclick = async () => {
+try { await api('/allocation', { method: 'POST', body: JSON.stringify({ practiceId: $('#allocPractice').value, assignments: collectAlloc()})});
+$('#allocMsg').textContent = '保存しました'; refresh();
+} catch (e) { $('#allocMsg').textContent = e.message;}
+};
+
+// --- 幹部：期限変更・役割変更・変更リクエスト ---
+async function loadOfficerExtras() {
+  // 出席表の表示
+  const ssel = $('#sheetPractice');
+  if (ssel) {
+    const prev = ssel.value;
+    ssel.innerHTML = practices.map((p) => `<option value="${p.id}">${esc(p.date)} ${esc(p.place)}</option>`).join('');
+    if (prev && practices.some((p) => p.id === prev)) ssel.value = prev;
+    const showSheet = async () => {
+      if (!ssel.value) { $('#sheetBody').innerHTML = ''; return; }
+      const d = await api('/practices/' + ssel.value + '/detail');
+      const rows = attendeeRows(d);
+      $('#sheetBody').innerHTML = rows.length
+        ? '<table><tr><th>名前</th><th>学年</th><th>先発or後発orピン</th><th>車だしor同乗</th></tr>' +
+          rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('') + '</table>'
+        : '<p class="meta">出席者はまだいません</p>';
+    };
+    ssel.onchange = showSheet;
+    if (practices.length) showSheet();
+    $('#sheetCsv').onclick = async () => {
+      const d = await api('/practices/' + ssel.value + '/detail');
+      exportPractice(encodeURIComponent(JSON.stringify(d)), practices.find((x) => x.id === ssel.value) || 'practice');
+    };
+    $('#sheetImg').onclick = async () => {
+      const d = await api('/practices/' + ssel.value + '/detail');
+      const pr2 = practices.find((x) => x.id === ssel.value);
+      const rows = attendeeRows(d);
+      const info = `${pr2.date}　${pr2.place}　${pr2.type}　${rows.length}人　${pr2.start}〜${pr2.end}`;
+      downloadTablePng(info, ['名前', '学年', '先発or後発orピン', '車だしor同乗'], rows, `出席者リスト_${pr2.date}.png`, true);
+    };
+  }
+  // 交通費計算
+  const tcMonth = $('#tcMonth');
+  if (tcMonth) {
+    if (!tcMonth.value) tcMonth.value = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).slice(0, 7);
+    const st = await api('/settings');
+    const places = [...new Set(practices.map((p) => p.place))];
+    $('#tcGyms').innerHTML = places.map((pl) => `<label>${esc(pl)}までの往復距離（km）</label><input type="number" class="tc-dist" data-place="${esc(pl)}" min="0" step="0.1" value="${st.settings.gymDistances[pl] ?? ''}">`).join('');
+    const syncGas = () => { $('#tcGas').value = st.settings.gasPrices[tcMonth.value] ?? ''; };
+    tcMonth.onchange = syncGas; syncGas();
+    $('#tcSaveSettings').onclick = async () => {
+      const gymDistances = { ...st.settings.gymDistances };
+      document.querySelectorAll('.tc-dist').forEach((i) => { if (i.value !== '') gymDistances[i.dataset.place] = parseFloat(i.value); });
+      const gasPrices = { ...st.settings.gasPrices };
+      if ($('#tcGas').value !== '') gasPrices[tcMonth.value] = parseFloat($('#tcGas').value);
+      await api('/settings', { method: 'POST', body: JSON.stringify({ gymDistances, gasPrices }) });
+      $('#tcMsg').textContent = '保存しました';
+    };
+    $('#tcCalc').onclick = async () => {
+      const month = tcMonth.value;
+      const gas = parseFloat($('#tcGas').value);
+      if (!(gas > 0)) { $('#tcMsg').textContent = 'ガソリン価格を入力してください'; return; }
+      const dist = { ...st.settings.gymDistances };
+      document.querySelectorAll('.tc-dist').forEach((i) => { if (i.value !== '') dist[i.dataset.place] = parseFloat(i.value); });
+      const targets = practices.filter((p) => p.date.startsWith(month));
+      const per = {};
+      for (const pr of targets) {
+        const d = await api('/practices/' + pr.id + '/detail');
+        for (const drvId of Object.keys(d.allocation || {})) {
+          const m = members.find((x) => x.id === drvId); if (!m) continue;
+          const e = per[drvId] || (per[drvId] = { member: m, trips: 0, places: {}, cost: 0, noDist: false });
+          e.trips++; e.places[pr.place] = (e.places[pr.place] || 0) + 1;
+          const km = dist[pr.place];
+          if (km == null) { e.noDist = true; continue; }
+          if (m.fuelEconomy) e.cost += (km / m.fuelEconomy) * gas;
+        }
+      }
+      const rows = Object.values(per).sort((a, b) => b.cost - a.cost);
+      const total = rows.reduce((a, r) => a + r.cost, 0);
+      $('#tcResult').innerHTML = rows.length ? '<table><tr><th>名前</th><th>車出し回数</th><th>行き先</th><th>燃費</th><th>交通費</th></tr>' +
+        rows.map((r) => `<tr><td>${esc(r.member.name)}</td><td>${r.trips}回</td><td>${Object.entries(r.places).map(([k, v]) => `${esc(k)}×${v}`).join('、')}</td><td>${r.member.fuelEconomy ? r.member.fuelEconomy + 'km/L' : '未登録'}</td><td>${r.member.fuelEconomy ? Math.round(r.cost).toLocaleString() + '円' : '計算不可'}${r.noDist ? '（距離未設定の体育館あり）' : ''}</td></tr>`).join('') +
+        `</table><p class="meta">合計：${Math.round(total).toLocaleString()}円（ガソリン価格 ${gas}円/L で計算）</p>` : '<p class="meta">その月に車出しの記録がありません</p>';
+    };
+  }
+  // 変更の数一覧
+  const chg = $('#chgBody');
+  if (chg) {
+    const sorted = [...members].sort((a, b) => (b.changesThisMonth || 0) - (a.changesThisMonth || 0));
+    chg.innerHTML = sorted.map((m) => `${esc(m.name)}：今月${m.changesThisMonth || 0}回`).join('<br>');
+  }
+  // 色ごとの人数
+  const csel = $('#colorPractice');
+  if (csel) {
+    const prev = csel.value;
+    csel.innerHTML = practices.map((p) => `<option value="${p.id}">${esc(p.date)} ${esc(p.place)}</option>`).join('');
+    if (prev && practices.some((p) => p.id === prev)) csel.value = prev;
+    const showColors = async () => {
+      if (!csel.value) { $('#colorBody').textContent = ''; return; }
+      const d = await api('/practices/' + csel.value + '/detail');
+      $('#colorBody').innerHTML = '出席者の色ごと人数：' + colorCounts(d.responses);
+    };
+    csel.onchange = showColors;
+    if (practices.length) showColors();
+  }
+  // 期限変更
+  const sel = $('#dlPractice');
+  sel.innerHTML = practices.map((p) => `<option value="${p.id}">${esc(p.date)} ${esc(p.place)}</option>`).join('');
+  const setDl = () => { const p = practices.find((x) => x.id === sel.value); $('#dlValue').value = p ? (p.deadline || '') : ''; };
+  sel.onchange = setDl; setDl();
+  // 役割変更
+  const roleQuery = ($('#roleSearch').value || '').trim();
+  $('#roleBody').innerHTML = members.filter((m) => !roleQuery || m.name.includes(roleQuery)).map((m) => `
+    <p class="meta">${esc(m.name)}（${m.role === 'officer' ? '幹部' : '部員'}・${esc(m.grade || '')}）
+    <select data-grade="${m.id}">${[1,2,3,4,5,6].map((g) => `<option value="${g}年" ${m.grade === g + '年' ? 'selected' : ''}>${g}年</option>`).join('')}</select>
+    <button class="sub" data-role="${m.id}" data-to="${m.role === 'officer' ? 'member' : 'officer'}">${m.role === 'officer' ? '部員にする' : '幹部にする'}</button></p>`).join('');
+  const rs = $('#roleSearch');
+  if (rs && !rs.dataset.wired) { rs.dataset.wired = '1'; rs.oninput = () => loadOfficerExtras(); }
+  document.querySelectorAll('[data-grade]').forEach((s) => s.onchange = async () => {
+    try { await api('/members/grade', { method: 'POST', body: JSON.stringify({ memberId: s.dataset.grade, grade: s.value }) });
+      const mm = await api('/members'); members = mm.members;
+    } catch (e) { alert(e.message); }
+  });
+  document.querySelectorAll('[data-role]').forEach((b) => b.onclick = async () => {
+    try { let pw = '';
+      if (b.dataset.to === 'officer') { pw = prompt('幹部用パスワードを設定してください（4文字以上、その人に伝えてください）') || ''; if (!pw) return; }
+      await api('/members/role', { method: 'POST', body: JSON.stringify({ memberId: b.dataset.role, role: b.dataset.to, password: pw }) });
+      const m = await api('/members'); members = m.members; loadOfficerExtras();
+    } catch (e) { alert(e.message); }
+  });
+  // 変更リクエスト
+  try {
+    const j = await api('/change-requests');
+    $('#crBody').innerHTML = j.changeRequests.length ? j.changeRequests.map((c) => `
+      <p class="meta">${esc(c.practice ? c.practice.date + ' ' + c.practice.place : '')}：${esc(c.member.name)} → ${c.desiredStatus === 'present' ? '出席' : '欠席'}に変更希望${c.message ? '（' + esc(c.message) + '）' : ''}</p>`).join('')
+      : '変更リクエストはまだありません。';
+  } catch { $('#crBody').textContent = '読み込めませんでした'; }
+}
+$('#dlSave').onclick = async () => {
+  try { await api('/practices/' + $('#dlPractice').value + '/update', { method: 'POST', body: JSON.stringify({ deadline: $('#dlValue').value }) });
+    $('#dlMsg').textContent = '保存しました'; refresh();
+  } catch (e) { $('#dlMsg').textContent = e.message; }
+};
+
+// --- 幹部メニューをアコーディオン化（タイトルだけ表示し、押すと広がる） ---
+(() => {
+  const tab = document.querySelector('#tab-officer');
+  const order = ['変更リクエスト', '車割', '出席表', '色ごと', '練習を登録', '回答期限', '変更回数', '交通費', '役割'];
+  const cards = Array.from(tab.querySelectorAll('.card'));
+  cards.sort((a, b) => {
+    const ia = order.findIndex((k) => (a.querySelector('h2') || {}).textContent?.includes(k));
+    const ib = order.findIndex((k) => (b.querySelector('h2') || {}).textContent?.includes(k));
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  }).forEach((c) => tab.appendChild(c));
+})();
+document.querySelectorAll('#tab-officer .card').forEach((card) => {
+  const h2 = card.querySelector('h2'); if (!h2) return;
+  const body = document.createElement('div'); body.style.display = 'none';
+  Array.from(card.children).filter((c) => c !== h2).forEach((c) => body.appendChild(c));
+  card.appendChild(body);
+  h2.style.cursor = 'pointer';
+  const mark = document.createElement('span'); mark.textContent = ' ▽'; h2.appendChild(mark);
+  h2.onclick = () => { const open = body.style.display !== 'none'; body.style.display = open ? 'none' : 'block'; mark.textContent = open ? ' ▽' : ' △'; };
+});
+
+// --- 起動 ---
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+(async () => { if (token) { try { const j = await api('/me'); me = j.member; showApp();} catch { token = '';}}})();
+</script>
+</body>
+</html>
