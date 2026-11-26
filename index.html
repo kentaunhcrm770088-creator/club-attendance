@@ -190,17 +190,39 @@ window.downloadTablePng = (title, header, rows, filename, redTitle) => {
   shareCanvasImage(cv, filename);
 };
 window.shareCanvasImage = async (cv, filename) => {
+  // iPhoneでは共有シート（「写真に保存」）が最も確実なので、まずそれを試す。
+  // 共有が使えない・キャンセルされた場合だけ、下の全画面表示に進む。
+  try {
+    const blob = await new Promise((res) => cv.toBlob(res, 'image/png'));
+    if (blob) {
+      const file = new File([blob], filename, { type: 'image/png' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return; }
+    }
+  } catch (e) { /* 共有不可・キャンセルの場合は表示に進む */ }
   const dataUrl = cv.toDataURL('image/png');
-  let url = dataUrl;
-  try { const r = await api('/image', { method: 'POST', body: JSON.stringify({ data: dataUrl }) }); if (r && r.url) url = r.url; } catch {}
-  showImageOverlay(url, filename);
+  let url = dataUrl, err = '';
+  try { const r = await api('/image', { method: 'POST', body: JSON.stringify({ data: dataUrl }) }); if (r && r.url) url = r.url; } catch (e) { err = (e && e.message) || 'サーバーへの送信に失敗しました'; }
+  showImageOverlay(url, filename, err);
 };
-window.showImageOverlay = (dataUrl, filename) => {
+window.shareImageUrl = async (url, filename) => {
+  try {
+    const r = await fetch(url); const blob = await r.blob();
+    const file = new File([blob], filename, { type: 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return; }
+    alert('このブラウザでは共有が使えません。画像を長押しして写真に保存してください');
+  } catch (e) { alert('共有できませんでした：' + (e && e.message ? e.message : 'エラー')); }
+};
+window.showImageOverlay = (dataUrl, filename, err) => {
+  window._lastImgUrl = dataUrl; window._lastImgName = filename;
   let ov = document.getElementById('imgOverlay');
   if (!ov) { ov = document.createElement('div'); ov.id = 'imgOverlay'; ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:999;overflow:auto;padding:16px;text-align:center'; document.body.appendChild(ov); }
-  ov.innerHTML = '<div style="color:#fff;font-size:13px;margin:8px 0">画像を長押しすると写真に保存できます</div>'
+  // 旧版は送信失敗を黙って握りつぶし、既に表示できないと分かっている埋め込み画像に
+  // 戻していたため「前と同じ？」に見えた。失敗時はその旨をはっきり出す。
+  ov.innerHTML = (err ? '<div style="color:#ff9a9a;font-size:13px;margin:8px 0">サーバーへの画像送信に失敗しました：' + esc(err) + '。下の「共有する」から保存してみてください</div>' : '')
+    + '<div style="color:#fff;font-size:13px;margin:8px 0">「共有する」を押すと写真に保存できます（長押しでも保存できます）</div>'
     + '<img src="' + dataUrl + '" style="max-width:100%;background:#fff">'
-    + '<div style="margin:14px 0"><a href="' + dataUrl + '" download="' + filename + '" style="color:#8fc1ff;font-size:14px">ダウンロード</a>'
+    + '<div style="margin:14px 0"><button onclick="shareImageUrl(window._lastImgUrl, window._lastImgName)" style="padding:8px 18px;font-size:14px">共有する（写真に保存）</button>'
+    + '　<a href="' + dataUrl + '" download="' + filename + '" style="color:#8fc1ff;font-size:14px">PC用ダウンロード</a>'
     + '　<button onclick="document.getElementById(\'imgOverlay\').style.display=\'none\'" style="padding:8px 18px;font-size:14px">閉じる</button></div>';
   ov.style.display = 'block';
 };
