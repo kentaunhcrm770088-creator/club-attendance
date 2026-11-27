@@ -25,6 +25,11 @@ data.changeRequests = data.changeRequests || [];
 data.changeLog = data.changeLog || [];
 data.settings = data.settings || { gymDistances: {}, gasPrices: {} };
 
+// 体育館ごとの往復距離プリセット（km、つくば⇔体育館の往復）。
+// 練習の場所文字列にプリセット名が含まれていれば、その距離を初期値として使う。
+// 幹部が距離を保存した体育館については、保存した値が優先される。
+const GYM_DISTANCE_PRESETS = { '北条': 25, '豊里': 17, '桜': 8, '洞峰': 9, 'カピオ': 5, '谷田部': 18, '石岡': 54, '千葉大': 178, '自治': 80, '横須賀': 72, 'ふれあい': 42, '白子': 206, 'アダスト': 110, 'たつのこ': 42 };
+
 function hashPassword(password, salt) {
   return crypto.scryptSync(password, salt, 64).toString('hex');
 }
@@ -64,7 +69,7 @@ function effectiveGrade(m) {
   const gy = m.gradeYear != null ? m.gradeYear : academicYear();
   return Math.min(6, Math.max(1, base + (academicYear() - gy))) + '年';
 }
-function publicMember(m) { return { id: m.id, name: m.name, surname: m.surname || null, givenName: m.givenName || null, role: m.role, grade: effectiveGrade(m), fuelEconomy: m.fuelEconomy || null }; }
+function publicMember(m) { return { id: m.id, name: m.name, surname: m.surname || null, givenName: m.givenName || null, role: m.role, grade: effectiveGrade(m) }; }
 function monthKeyJST(iso) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit' }).format(new Date(iso));
 }
@@ -197,16 +202,9 @@ const server = http.createServer(async (req, res) => {
     if (!me) return sendJson(res, 401, { error: 'ログインが必要です' });
 
     if (p === '/api/me') return sendJson(res, 200, { member: { ...publicMember(me), changesThisMonth: changesThisMonth(me.id) } });
-    if (p === '/api/me/fuel' && req.method === 'POST') {
-      const b = await readBody(req);
-      const v = parseFloat(b.fuelEconomy);
-      if (!(v > 0 && v <= 100)) return sendJson(res, 400, { error: '燃費は km/L で入力してください' });
-      me.fuelEconomy = v; saveData(data);
-      return sendJson(res, 200, { ok: true, fuelEconomy: v });
-    }
     if (p === '/api/settings' && req.method === 'GET') {
       if (me.role !== 'officer') return sendJson(res, 403, { error: '幹部だけが見られます' });
-      return sendJson(res, 200, { settings: data.settings });
+      return sendJson(res, 200, { settings: data.settings, presets: GYM_DISTANCE_PRESETS });
     }
     if (p === '/api/settings' && req.method === 'POST') {
       if (me.role !== 'officer') return sendJson(res, 403, { error: '幹部だけが変更できます' });
@@ -240,7 +238,23 @@ const server = http.createServer(async (req, res) => {
       delete data.sessions[token]; saveData(data);
       return sendJson(res, 200, { ok: true });
     }
-    if (p === '/api/members') return sendJson(res, 200, { members: data.members.map((m) => me.role === 'officer' ? { ...publicMember(m), changesThisMonth: changesThisMonth(m.id) } : publicMember(m)) });
+    if (p === '/api/members') return sendJson(res, 200, { members: data.members.map((m) => me.role === 'officer' ? { ...publicMember(m), changesThisMonth: changesThisMonth(m.id), catalogFuel: m.catalogFuel ?? null } : publicMember(m)) });
+    if (p === '/api/members/fuel' && req.method === 'POST') {
+      // カタログ燃費の入力は幹部だけが行う（部員から聞いて幹部が登録する）
+      if (me.role !== 'officer') return sendJson(res, 403, { error: '燃費の変更は幹部だけができます' });
+      const b = await readBody(req);
+      const target = data.members.find((m) => m.id === b.memberId);
+      if (!target) return sendJson(res, 404, { error: '部員が見つかりません' });
+      if (b.catalogFuel === '' || b.catalogFuel == null) {
+        target.catalogFuel = null;
+      } else {
+        const v = parseFloat(b.catalogFuel);
+        if (!(v > 0 && v <= 100)) return sendJson(res, 400, { error: 'カタログ燃費は km/L で入力してください' });
+        target.catalogFuel = v;
+      }
+      saveData(data);
+      return sendJson(res, 200, { ok: true, memberId: target.id, catalogFuel: target.catalogFuel ?? null });
+    }
     if (p === '/api/members/grade' && req.method === 'POST') {
       if (me.role !== 'officer') return sendJson(res, 403, { error: '学年の変更は幹部だけができます' });
       const b = await readBody(req);

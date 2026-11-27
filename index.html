@@ -49,7 +49,7 @@ label { font-size: 13px; color: #444;}
 <div class="err" id="authErr"></div>
 <button class="primary" id="authBtn">ログイン</button>
 <p class="meta" style="text-align:center"><a href="#" id="authToggle">初めての方はこちら（新規登録）</a></p>
-<p class="meta" style="text-align:center">アプリ版 2026-11-27-4</p>
+<p class="meta" style="text-align:center">アプリ版 2026-11-27-5</p>
 </div>
 </section>
 
@@ -123,13 +123,14 @@ label { font-size: 13px; color: #444;}
 <label>対象の月</label><input type="month" id="tcMonth">
 <label>その月のガソリン価格（円/L）</label><input type="number" id="tcGas" min="0" placeholder="例：170">
 <div id="tcGyms"></div>
+<p class="meta">距離は主な体育館のプリセット（往復km）が初期値として入ります。違う場合は直して保存してください。燃費はカタログ燃費の半分（小数切り捨て）を実燃費として計算し、金額は切り上げです。カタログ燃費は下の「部員の役割・学年・燃費を変更」で入力してください。</p>
 <button class="sub" id="tcSaveSettings">距離と価格を保存</button>
 <button class="primary" id="tcCalc">計算する</button>
 <div id="tcResult" style="margin-top:8px"></div>
 <div class="err" id="tcMsg"></div>
 </div>
 <div class="card">
-<h2>部員の役割・学年を変更</h2>
+<h2>部員の役割・学年・燃費を変更</h2>
 <input id="roleSearch" placeholder="名前で検索" style="margin-bottom:8px">
 <div id="roleBody" style="max-height:320px;overflow-y:auto"></div>
 </div>
@@ -321,12 +322,7 @@ try { const j = await api('/me'); me = j.member; } catch {}
 $('#authView').style.display = 'none'; $('#appView').style.display = 'block';
 $('#userBox').innerHTML = `${esc(me.name)}（${me.role === 'officer'? '幹部': '部員'}） <button onclick="enablePush()">通知をON</button> <button onclick="logout()">ログアウト</button>`;
 const info = document.getElementById('myInfo');
-if (info) info.innerHTML = `今月の出欠変更は <b>${me.changesThisMonth ?? 0}回</b> です（変更はなるべく少なくお願いします）<br>車の燃費（km/L）：<input id="myFuel" type="number" step="0.1" min="1" max="100" value="${me.fuelEconomy || ''}" style="width:80px"> <button class="sub" id="myFuelSave">保存</button> <span id="myFuelMsg"></span>`;
-const fsBtn = document.getElementById('myFuelSave');
-if (fsBtn) fsBtn.onclick = async () => {
-  try { await api('/me/fuel', { method: 'POST', body: JSON.stringify({ fuelEconomy: $('#myFuel').value }) }); $('#myFuelMsg').textContent = '保存しました'; }
-  catch (e) { $('#myFuelMsg').textContent = e.message; }
-};
+if (info) info.innerHTML = `今月の出欠変更は <b>${me.changesThisMonth ?? 0}回</b> です（変更はなるべく少なくお願いします）`;
 if (me.role === 'officer') { $('#officerTab').style.display = 'block'; } else { $('#todayTab').style.display = 'none'; }
 await refresh();
 }
@@ -680,8 +676,13 @@ async function loadOfficerExtras() {
   if (tcMonth) {
     if (!tcMonth.value) tcMonth.value = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).slice(0, 7);
     const st = await api('/settings');
+    const presets = st.presets || {};
+    // 場所文字列にプリセット名が含まれる体育館は、その往復距離を初期値にする（幹部が保存した距離が優先）
+    const presetFor = (pl) => { const k = Object.keys(presets).sort((a, b) => b.length - a.length).find((key) => pl.includes(key)); return k ? presets[k] : undefined; };
+    // 実燃費＝カタログ燃費の半分（小数切り捨て）
+    const realFuelOf = (m) => m.catalogFuel ? Math.floor(m.catalogFuel / 2) : 0;
     const places = [...new Set(practices.map((p) => p.place))];
-    $('#tcGyms').innerHTML = places.map((pl) => `<label>${esc(pl)}までの往復距離（km）</label><input type="number" class="tc-dist" data-place="${esc(pl)}" min="0" step="0.1" value="${st.settings.gymDistances[pl] ?? ''}">`).join('');
+    $('#tcGyms').innerHTML = places.map((pl) => `<label>${esc(pl)}までの往復距離（km）</label><input type="number" class="tc-dist" data-place="${esc(pl)}" min="0" step="0.1" value="${st.settings.gymDistances[pl] ?? presetFor(pl) ?? ''}">`).join('');
     const syncGas = () => { $('#tcGas').value = st.settings.gasPrices[tcMonth.value] ?? ''; };
     tcMonth.onchange = syncGas; syncGas();
     $('#tcSaveSettings').onclick = async () => {
@@ -698,6 +699,7 @@ async function loadOfficerExtras() {
       if (!(gas > 0)) { $('#tcMsg').textContent = 'ガソリン価格を入力してください'; return; }
       const dist = { ...st.settings.gymDistances };
       document.querySelectorAll('.tc-dist').forEach((i) => { if (i.value !== '') dist[i.dataset.place] = parseFloat(i.value); });
+      const kmOf = (pl) => dist[pl] != null ? dist[pl] : presetFor(pl);
       const targets = practices.filter((p) => p.date.startsWith(month));
       const per = {};
       for (const pr of targets) {
@@ -706,16 +708,17 @@ async function loadOfficerExtras() {
           const m = members.find((x) => x.id === drvId); if (!m) continue;
           const e = per[drvId] || (per[drvId] = { member: m, trips: 0, places: {}, cost: 0, noDist: false });
           e.trips++; e.places[pr.place] = (e.places[pr.place] || 0) + 1;
-          const km = dist[pr.place];
+          const km = kmOf(pr.place);
           if (km == null) { e.noDist = true; continue; }
-          if (m.fuelEconomy) e.cost += (km / m.fuelEconomy) * gas;
+          const rf = realFuelOf(m);
+          if (rf > 0) e.cost += (km / rf) * gas;
         }
       }
       const rows = Object.values(per).sort((a, b) => b.cost - a.cost);
-      const total = rows.reduce((a, r) => a + r.cost, 0);
-      $('#tcResult').innerHTML = rows.length ? '<table><tr><th>名前</th><th>車出し回数</th><th>行き先</th><th>燃費</th><th>交通費</th></tr>' +
-        rows.map((r) => `<tr><td>${esc(r.member.name)}</td><td>${r.trips}回</td><td>${Object.entries(r.places).map(([k, v]) => `${esc(k)}×${v}`).join('、')}</td><td>${r.member.fuelEconomy ? r.member.fuelEconomy + 'km/L' : '未登録'}</td><td>${r.member.fuelEconomy ? Math.round(r.cost).toLocaleString() + '円' : '計算不可'}${r.noDist ? '（距離未設定の体育館あり）' : ''}</td></tr>`).join('') +
-        `</table><p class="meta">合計：${Math.round(total).toLocaleString()}円（ガソリン価格 ${gas}円/L で計算）</p>` : '<p class="meta">その月に車出しの記録がありません</p>';
+      const total = rows.reduce((a, r) => a + (realFuelOf(r.member) > 0 ? Math.ceil(r.cost) : 0), 0);
+      $('#tcResult').innerHTML = rows.length ? '<table><tr><th>名前</th><th>車出し回数</th><th>行き先</th><th>燃費（カタログ→実燃費）</th><th>交通費</th></tr>' +
+        rows.map((r) => `<tr><td>${esc(r.member.name)}</td><td>${r.trips}回</td><td>${Object.entries(r.places).map(([k, v]) => `${esc(k)}×${v}`).join('、')}</td><td>${r.member.catalogFuel ? `カタログ${r.member.catalogFuel}→実燃費${realFuelOf(r.member)}km/L` : '未登録'}</td><td>${realFuelOf(r.member) > 0 ? Math.ceil(r.cost).toLocaleString() + '円' : '計算不可'}${r.noDist ? '（距離未設定の体育館あり）' : ''}</td></tr>`).join('') +
+        `</table><p class="meta">合計：${total.toLocaleString()}円（ガソリン価格 ${gas}円/L で計算）</p>` : '<p class="meta">その月に車出しの記録がありません</p>';
     };
   }
   // 変更の数一覧
@@ -748,7 +751,8 @@ async function loadOfficerExtras() {
   $('#roleBody').innerHTML = members.filter((m) => !roleQuery || m.name.includes(roleQuery)).map((m) => `
     <p class="meta">${esc(m.name)}（${m.role === 'officer' ? '幹部' : '部員'}・${esc(m.grade || '')}）
     <select data-grade="${m.id}">${[1,2,3,4,5,6].map((g) => `<option value="${g}年" ${m.grade === g + '年' ? 'selected' : ''}>${g}年</option>`).join('')}</select>
-    <button class="sub" data-role="${m.id}" data-to="${m.role === 'officer' ? 'member' : 'officer'}">${m.role === 'officer' ? '部員にする' : '幹部にする'}</button></p>`).join('');
+    <button class="sub" data-role="${m.id}" data-to="${m.role === 'officer' ? 'member' : 'officer'}">${m.role === 'officer' ? '部員にする' : '幹部にする'}</button>
+    <br>カタログ燃費：<input type="number" data-fuel="${m.id}" min="0" step="0.1" value="${m.catalogFuel ?? ''}" style="width:76px"> km/L <button class="sub" data-fuelsave="${m.id}">燃費を保存</button></p>`).join('');
   const rs = $('#roleSearch');
   if (rs && !rs.dataset.wired) { rs.dataset.wired = '1'; rs.oninput = () => loadOfficerExtras(); }
   document.querySelectorAll('[data-grade]').forEach((s) => s.onchange = async () => {
@@ -760,6 +764,12 @@ async function loadOfficerExtras() {
     try { let pw = '';
       if (b.dataset.to === 'officer') { pw = prompt('幹部用パスワードを設定してください（4文字以上、その人に伝えてください）') || ''; if (!pw) return; }
       await api('/members/role', { method: 'POST', body: JSON.stringify({ memberId: b.dataset.role, role: b.dataset.to, password: pw }) });
+      const m = await api('/members'); members = m.members; loadOfficerExtras();
+    } catch (e) { alert(e.message); }
+  });
+  document.querySelectorAll('[data-fuelsave]').forEach((b) => b.onclick = async () => {
+    const inp = document.querySelector(`[data-fuel="${b.dataset.fuelsave}"]`);
+    try { await api('/members/fuel', { method: 'POST', body: JSON.stringify({ memberId: b.dataset.fuelsave, catalogFuel: inp && inp.value !== '' ? parseFloat(inp.value) : '' }) });
       const m = await api('/members'); members = m.members; loadOfficerExtras();
     } catch (e) { alert(e.message); }
   });
