@@ -49,6 +49,7 @@ label { font-size: 13px; color: #444;}
 <div class="err" id="authErr"></div>
 <button class="primary" id="authBtn">ログイン</button>
 <p class="meta" style="text-align:center"><a href="#" id="authToggle">初めての方はこちら（新規登録）</a></p>
+<p class="meta" style="text-align:center">アプリ版 2026-11-27-4</p>
 </div>
 </section>
 
@@ -162,7 +163,7 @@ window.downloadTablePng = (title, header, rows, filename, redTitle) => {
   const scale = 2, pad = 16, rowH = 34, titleH = 44, font = '16px sans-serif';
   const meas = document.createElement('canvas').getContext('2d'); meas.font = font;
   const all = [header, ...rows];
-  const colW = header.map((_, i) => Math.max(...all.map((r) => meas.measureText(String(r[i] ?? '')).length), meas.measureText(title).length / header.length) + pad * 2);
+  const colW = header.map((_, i) => Math.max(...all.map((r) => meas.measureText(String(r[i] ?? '')).width), meas.measureText(title).width / header.length) + pad * 2);
   const width = colW.reduce((a, b) => a + b, 0);
   const height = titleH + rowH * all.length + pad;
   const cv = document.createElement('canvas'); cv.width = width * scale; cv.height = height * scale;
@@ -244,7 +245,7 @@ window.downloadAllocPng = (info, cars, filename) => {
   const grid = cars;
   const cols = Math.max(...grid.map((r) => r.length));
   const meas = document.createElement('canvas').getContext('2d'); meas.font = font;
-  const colW = Array.from({ length: cols }, (_, i) => Math.max(...grid.map((r) => meas.measureText(r[i] || '').length), 60) + pad * 2);
+  const colW = Array.from({ length: cols }, (_, i) => Math.max(...grid.map((r) => meas.measureText(r[i] || '').width), 60) + pad * 2);
   const width = colW.reduce((a, b) => a + b, 0);
   const height = titleH + rowH * grid.length + pad;
   const cv = document.createElement('canvas'); cv.width = width * scale; cv.height = height * scale;
