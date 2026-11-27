@@ -33,6 +33,70 @@ const GYM_DISTANCE_PRESETS = { '北条': 25, '豊里': 17, '桜': 8, '洞峰': 9
 function hashPassword(password, salt) {
   return crypto.scryptSync(password, salt, 64).toString('hex');
 }
+// 幹部パスワードは全幹部で共通の1つ。ハッシュは settings に保存する（個人パスワードは使わない）。
+function officerPasswordIsSet() { return !!data.settings.officerPassHash; }
+function verifyOfficerPassword(password) {
+  if (!officerPasswordIsSet()) return false;
+  return hashPassword(password || '', data.settings.officerSalt) === data.settings.officerPassHash;
+}
+function setOfficerPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  data.settings.officerSalt = salt;
+  data.settings.officerPassHash = hashPassword(password, salt);
+}
+// 設定のうちクライアントに返してよい部分だけ（幹部パスワードのハッシュは返さない）
+function publicSettings() {
+  return { gymDistances: data.settings.gymDistances || {}, gasPrices: data.settings.gasPrices || {} };
+}
+
+// --- gogo.gs からのガソリン価格自動取得 ---
+// 茨城県（pref=8）の価格推移ページには、チャート用JSONが
+// x-init="createChart(..., JSON.parse('...'))" の形で埋め込まれている。
+// mode=0 がレギュラー、mode=1 がハイオク。データセット「現金価格（茨城県平均）」の最新値を取る。
+function fetchText(url, redirects = 3) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36', 'Accept-Language': 'ja' } }, (resp) => {
+      if (resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location && redirects > 0) {
+        resp.resume();
+        fetchText(new URL(resp.headers.location, url).toString(), redirects - 1).then(resolve, reject);
+        return;
+      }
+      if (resp.statusCode !== 200) { resp.resume(); reject(new Error('HTTP ' + resp.statusCode)); return; }
+      const chunks = [];
+      resp.on('data', (c) => chunks.push(c));
+      resp.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      resp.on('error', reject);
+    });
+    req.setTimeout(10000, () => req.destroy(new Error('timeout')));
+    req.on('error', reject);
+  });
+}
+function extractGogoIbarakiPrice(html) {
+  const key = "JSON.parse('";
+  const i = html.indexOf(key);
+  if (i < 0) return null;
+  let j = i + key.length, raw = '';
+  while (j < html.length) {
+    const c = html[j];
+    if (c === '\\') { raw += c + (html[j + 1] || ''); j += 2; continue; }
+    if (c === "'") break;
+    raw += c; j++;
+  }
+  let cfg;
+  try {
+    const decoded = raw.replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))).replace(/\\(.)/g, '$1');
+    cfg = JSON.parse(decoded);
+  } catch { return null; }
+  const labels = cfg && cfg.data && cfg.data.labels;
+  const datasets = (cfg && cfg.data && cfg.data.datasets) || [];
+  if (!Array.isArray(labels) || !labels.length) return null;
+  const ds = datasets.find((d) => (d.label || '').includes('茨城県平均')) || datasets[0];
+  if (!ds || !ds.data) return null;
+  const lastLabel = labels[labels.length - 1];
+  const v = ds.data[lastLabel];
+  if (typeof v !== 'number') return null;
+  return { price: v, date: lastLabel };
+}
 function newId() { return crypto.randomUUID(); }
 function todayJST() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo' }).format(new Date());
@@ -172,8 +236,16 @@ const server = http.createServer(async (req, res) => {
       if (!name) return sendJson(res, 400, { error: '名前が必要です' });
       if (isOfficer && (!password || password.length < 4)) return sendJson(res, 400, { error: '幹部は4文字以上のパスワードが必要です' });
       if (data.members.some((m) => m.name === name)) return sendJson(res, 400, { error: 'その名前は登録済みです' });
-      const salt = crypto.randomBytes(16).toString('hex');
-      const member = { id: newId(), name, surname: surname || null, givenName: givenName || null, salt, passHash: password ? hashPassword(password, salt) : '', role: isOfficer ? 'officer' : 'member', grade: grade || '', gradeBase: parseInt(grade) || null, gradeYear: academicYear() };
+      if (isOfficer) {
+        // 幹部パスワードは全幹部共通。未設定ならこの入力が初代の共通パスワードになる。
+        // 設定済みなら一致しない限り幹部登録できない。
+        if (officerPasswordIsSet()) {
+          if (!verifyOfficerPassword(password)) return sendJson(res, 400, { error: '幹部パスワードが違います' });
+        } else {
+          setOfficerPassword(password);
+        }
+      }
+      const member = { id: newId(), name, surname: surname || null, givenName: givenName || null, role: isOfficer ? 'officer' : 'member', grade: grade || '', gradeBase: parseInt(grade) || null, gradeYear: academicYear() };
       data.members.push(member);
       const token = crypto.randomBytes(24).toString('hex');
       data.sessions[token] = member.id;
@@ -187,10 +259,10 @@ const server = http.createServer(async (req, res) => {
       if (b.surname && b.givenName) name = b.surname.trim() + ' ' + b.givenName.trim();
       const member = data.members.find((m) => m.name === name);
       if (!member) return sendJson(res, 401, { error: '名前かパスワードが違います' });
-      // パスワードが必要なのは幹部だけ。部員は名前だけでログインできる
+      // パスワードが必要なのは幹部だけ（全幹部共通のパスワードで判定）。部員は名前だけでログインできる
       if (member.role === 'officer') {
-        if (!member.passHash) return sendJson(res, 401, { error: 'パスワードが未設定です。幹部に設定してもらってください' });
-        if (hashPassword(password || '', member.salt) !== member.passHash)
+        if (!officerPasswordIsSet()) return sendJson(res, 401, { error: '幹部パスワードが未設定です。幹部に設定してもらってください' });
+        if (!verifyOfficerPassword(password))
           return sendJson(res, 401, { error: '名前かパスワードが違います' });
       }
       const token = crypto.randomBytes(24).toString('hex');
@@ -204,7 +276,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/me') return sendJson(res, 200, { member: { ...publicMember(me), changesThisMonth: changesThisMonth(me.id) } });
     if (p === '/api/settings' && req.method === 'GET') {
       if (me.role !== 'officer') return sendJson(res, 403, { error: '幹部だけが見られます' });
-      return sendJson(res, 200, { settings: data.settings, presets: GYM_DISTANCE_PRESETS });
+      return sendJson(res, 200, { settings: publicSettings(), presets: GYM_DISTANCE_PRESETS });
     }
     if (p === '/api/settings' && req.method === 'POST') {
       if (me.role !== 'officer') return sendJson(res, 403, { error: '幹部だけが変更できます' });
@@ -212,7 +284,37 @@ const server = http.createServer(async (req, res) => {
       if (b.gymDistances) data.settings.gymDistances = b.gymDistances;
       if (b.gasPrices) data.settings.gasPrices = b.gasPrices;
       saveData(data);
-      return sendJson(res, 200, { ok: true, settings: data.settings });
+      return sendJson(res, 200, { ok: true, settings: publicSettings() });
+    }
+    if (p === '/api/settings/officer-password' && req.method === 'POST') {
+      // 幹部パスワード（全幹部共通）の変更。幹部ログイン済みの人だけが実行できる。
+      if (me.role !== 'officer') return sendJson(res, 403, { error: '幹部パスワードの変更は幹部だけができます' });
+      const b = await readBody(req);
+      const newPassword = b.newPassword || '';
+      if (newPassword.length < 4) return sendJson(res, 400, { error: '新しいパスワードは4文字以上にしてください' });
+      // 設定済みの場合は現在のパスワード確認が必須。未設定なら設定として扱う。
+      if (officerPasswordIsSet() && !verifyOfficerPassword(b.currentPassword))
+        return sendJson(res, 400, { error: '現在のパスワードが違います' });
+      setOfficerPassword(newPassword);
+      saveData(data);
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // --- ガソリン価格の自動取得（gogo.gs 茨城県平均、幹部専用） ---
+    if (p === '/api/gas-prices' && req.method === 'GET') {
+      if (me.role !== 'officer') return sendJson(res, 403, { error: '価格の自動取得は幹部だけができます' });
+      try {
+        const [regHtml, highHtml] = await Promise.all([
+          fetchText('https://gogo.gs/chart/pref/8?mode=0&range=0'),
+          fetchText('https://gogo.gs/chart/pref/8?mode=1&range=0'),
+        ]);
+        const reg = extractGogoIbarakiPrice(regHtml);
+        const high = extractGogoIbarakiPrice(highHtml);
+        if (!reg || !high) return sendJson(res, 502, { error: '価格データを取り出せませんでした' });
+        return sendJson(res, 200, { regular: reg.price, high: high.price, date: reg.date, source: 'gogo.gs 茨城県平均（現金価格）' });
+      } catch {
+        return sendJson(res, 502, { error: 'ガソリン価格の自動取得に失敗しました' });
+      }
     }
 
     // --- プッシュ通知の購読 ---
@@ -238,22 +340,28 @@ const server = http.createServer(async (req, res) => {
       delete data.sessions[token]; saveData(data);
       return sendJson(res, 200, { ok: true });
     }
-    if (p === '/api/members') return sendJson(res, 200, { members: data.members.map((m) => me.role === 'officer' ? { ...publicMember(m), changesThisMonth: changesThisMonth(m.id), catalogFuel: m.catalogFuel ?? null } : publicMember(m)) });
+    if (p === '/api/members') return sendJson(res, 200, { members: data.members.map((m) => me.role === 'officer' ? { ...publicMember(m), changesThisMonth: changesThisMonth(m.id), catalogFuel: m.catalogFuel ?? null, fuelType: m.fuelType === 'high' ? 'high' : 'regular' } : publicMember(m)) });
     if (p === '/api/members/fuel' && req.method === 'POST') {
-      // カタログ燃費の入力は幹部だけが行う（部員から聞いて幹部が登録する）
+      // カタログ燃費と燃料種別の入力は幹部だけが行う（部員から聞いて幹部が登録する）
       if (me.role !== 'officer') return sendJson(res, 403, { error: '燃費の変更は幹部だけができます' });
       const b = await readBody(req);
       const target = data.members.find((m) => m.id === b.memberId);
       if (!target) return sendJson(res, 404, { error: '部員が見つかりません' });
+      // 先に全部検証してから反映する（検証エラー時に片方だけ保存されるのを防ぐ）
+      let newFuel;
       if (b.catalogFuel === '' || b.catalogFuel == null) {
-        target.catalogFuel = null;
+        newFuel = null;
       } else {
         const v = parseFloat(b.catalogFuel);
         if (!(v > 0 && v <= 100)) return sendJson(res, 400, { error: 'カタログ燃費は km/L で入力してください' });
-        target.catalogFuel = v;
+        newFuel = v;
       }
+      if (b.fuelType !== undefined && !['regular', 'high'].includes(b.fuelType))
+        return sendJson(res, 400, { error: '燃料種別が不正です' });
+      target.catalogFuel = newFuel;
+      if (b.fuelType !== undefined) target.fuelType = b.fuelType;
       saveData(data);
-      return sendJson(res, 200, { ok: true, memberId: target.id, catalogFuel: target.catalogFuel ?? null });
+      return sendJson(res, 200, { ok: true, memberId: target.id, catalogFuel: target.catalogFuel ?? null, fuelType: target.fuelType === 'high' ? 'high' : 'regular' });
     }
     if (p === '/api/members/grade' && req.method === 'POST') {
       if (me.role !== 'officer') return sendJson(res, 403, { error: '学年の変更は幹部だけができます' });
@@ -272,11 +380,11 @@ const server = http.createServer(async (req, res) => {
       const target = data.members.find((m) => m.id === b.memberId);
       if (!target) return sendJson(res, 404, { error: '部員が見つかりません' });
       const newRole = b.role === 'officer' ? 'officer' : 'member';
-      // 幹部にするときはパスワードを設定する（未設定の人）
-      if (newRole === 'officer' && !target.passHash && !b.password)
-        return sendJson(res, 400, { error: '幹部にするにはパスワードの設定が必要です' });
+      // 幹部パスワードは全幹部共通なので、昇格時に個人パスワードの設定は不要。
+      // 昇格した人は共通パスワードでログインできる。
       target.role = newRole;
-      if (newRole === 'officer' && b.password) target.passHash = hashPassword(b.password, target.salt);
+      delete target.passHash;
+      delete target.salt;
       saveData(data);
       return sendJson(res, 200, { member: publicMember(target) });
     }

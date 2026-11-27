@@ -39,7 +39,7 @@ label { font-size: 13px; color: #444;}
 <h2 id="authTitle">ログイン</h2>
 <label>名字</label><input id="authSurname" autocomplete="family-name">
 <label>名前</label><input id="authGiven" autocomplete="given-name">
-<label>パスワード（幹部だけ）</label><input id="authPass" type="password" autocomplete="current-password" placeholder="部員は入力いりません">
+<label>幹部パスワード（全幹部共通・幹部だけ）</label><input id="authPass" type="password" autocomplete="current-password" placeholder="幹部は共通パスワードを入力／部員は入力いりません">
 <div id="roleRow" style="display:none">
 <label>役割</label>
 <select id="authRole"><option value="member">部員</option><option value="officer">幹部</option></select>
@@ -49,7 +49,7 @@ label { font-size: 13px; color: #444;}
 <div class="err" id="authErr"></div>
 <button class="primary" id="authBtn">ログイン</button>
 <p class="meta" style="text-align:center"><a href="#" id="authToggle">初めての方はこちら（新規登録）</a></p>
-<p class="meta" style="text-align:center">アプリ版 2026-11-27-5</p>
+<p class="meta" style="text-align:center">アプリ版 2026-11-27-7</p>
 </div>
 </section>
 
@@ -121,9 +121,12 @@ label { font-size: 13px; color: #444;}
 <div class="card">
 <h2>交通費計算</h2>
 <label>対象の月</label><input type="month" id="tcMonth">
-<label>その月のガソリン価格（円/L）</label><input type="number" id="tcGas" min="0" placeholder="例：170">
+<label>レギュラー価格（円/L）</label><input type="number" id="tcGasRegular" min="0" step="0.1" placeholder="例：170">
+<label>ハイオク価格（円/L）</label><input type="number" id="tcGasHigh" min="0" step="0.1" placeholder="例：181">
+<button class="sub" id="tcFetchGas">価格を自動取得（gogo.gs 茨城県平均）</button>
+<p class="meta" id="tcGasNote"></p>
 <div id="tcGyms"></div>
-<p class="meta">距離は主な体育館のプリセット（往復km）が初期値として入ります。違う場合は直して保存してください。燃費はカタログ燃費の半分（小数切り捨て）を実燃費として計算し、金額は切り上げです。カタログ燃費は下の「部員の役割・学年・燃費を変更」で入力してください。</p>
+<p class="meta">距離は主な体育館のプリセット（往復km）が初期値として入ります。違う場合は直して保存してください。燃費はカタログ燃費の半分（小数切り捨て）を実燃費として計算し、金額は切り上げです。各人の金額は、その人の燃料種別（レギュラー／ハイオク）の価格で計算します。カタログ燃費と燃料種別は下の「部員の役割・学年・燃費を変更」で入力してください。</p>
 <button class="sub" id="tcSaveSettings">距離と価格を保存</button>
 <button class="primary" id="tcCalc">計算する</button>
 <div id="tcResult" style="margin-top:8px"></div>
@@ -133,6 +136,14 @@ label { font-size: 13px; color: #444;}
 <h2>部員の役割・学年・燃費を変更</h2>
 <input id="roleSearch" placeholder="名前で検索" style="margin-bottom:8px">
 <div id="roleBody" style="max-height:320px;overflow-y:auto"></div>
+</div>
+<div class="card">
+<h2>幹部パスワードを変更</h2>
+<p class="meta">幹部パスワードは全幹部で共通の1つです。代替わりのときはここで変更して、新しいパスワードを次の幹部に伝えてください。</p>
+<label>現在のパスワード</label><input type="password" id="opwCurrent" autocomplete="current-password">
+<label>新しいパスワード（4文字以上）</label><input type="password" id="opwNew" autocomplete="new-password">
+<button class="primary" id="opwSave">パスワードを変更</button>
+<div class="err" id="opwMsg"></div>
 </div>
 <div class="card">
 <h2>変更リクエスト（期限後の出欠変更）</h2>
@@ -683,20 +694,43 @@ async function loadOfficerExtras() {
     const realFuelOf = (m) => m.catalogFuel ? Math.floor(m.catalogFuel / 2) : 0;
     const places = [...new Set(practices.map((p) => p.place))];
     $('#tcGyms').innerHTML = places.map((pl) => `<label>${esc(pl)}までの往復距離（km）</label><input type="number" class="tc-dist" data-place="${esc(pl)}" min="0" step="0.1" value="${st.settings.gymDistances[pl] ?? presetFor(pl) ?? ''}">`).join('');
-    const syncGas = () => { $('#tcGas').value = st.settings.gasPrices[tcMonth.value] ?? ''; };
+    const syncGas = () => {
+      const gp = st.settings.gasPrices[tcMonth.value];
+      const g = (gp && typeof gp === 'object') ? gp : {};
+      $('#tcGasRegular').value = g.regular ?? '';
+      $('#tcGasHigh').value = g.high ?? '';
+    };
     tcMonth.onchange = syncGas; syncGas();
+    $('#tcFetchGas').onclick = async () => {
+      $('#tcMsg').textContent = '価格を取得中…';
+      try {
+        const g = await api('/gas-prices');
+        if (g.regular != null) $('#tcGasRegular').value = g.regular;
+        if (g.high != null) $('#tcGasHigh').value = g.high;
+        const dl = g.date ? String(g.date).replace('/', '月') + '日時点' : '';
+        $('#tcGasNote').textContent = `gogo.gs 茨城県平均${dl ? '（' + dl + '）' : ''}：レギュラー ${g.regular}円/L・ハイオク ${g.high}円/L`;
+        $('#tcMsg').textContent = '価格を取得しました。「距離と価格を保存」を押すと保存されます';
+      } catch (e) {
+        $('#tcMsg').textContent = '自動取得できませんでした。手入力してください';
+      }
+    };
     $('#tcSaveSettings').onclick = async () => {
       const gymDistances = { ...st.settings.gymDistances };
       document.querySelectorAll('.tc-dist').forEach((i) => { if (i.value !== '') gymDistances[i.dataset.place] = parseFloat(i.value); });
       const gasPrices = { ...st.settings.gasPrices };
-      if ($('#tcGas').value !== '') gasPrices[tcMonth.value] = parseFloat($('#tcGas').value);
+      const entry = {};
+      if ($('#tcGasRegular').value !== '') entry.regular = parseFloat($('#tcGasRegular').value);
+      if ($('#tcGasHigh').value !== '') entry.high = parseFloat($('#tcGasHigh').value);
+      if (Object.keys(entry).length) gasPrices[tcMonth.value] = entry; else delete gasPrices[tcMonth.value];
       await api('/settings', { method: 'POST', body: JSON.stringify({ gymDistances, gasPrices }) });
+      st.settings.gymDistances = gymDistances; st.settings.gasPrices = gasPrices;
       $('#tcMsg').textContent = '保存しました';
     };
     $('#tcCalc').onclick = async () => {
       const month = tcMonth.value;
-      const gas = parseFloat($('#tcGas').value);
-      if (!(gas > 0)) { $('#tcMsg').textContent = 'ガソリン価格を入力してください'; return; }
+      const prices = { regular: parseFloat($('#tcGasRegular').value), high: parseFloat($('#tcGasHigh').value) };
+      if (!(prices.regular > 0) && !(prices.high > 0)) { $('#tcMsg').textContent = 'ガソリン価格を入力してください'; return; }
+      const priceOf = (m) => prices[m.fuelType === 'high' ? 'high' : 'regular'];
       const dist = { ...st.settings.gymDistances };
       document.querySelectorAll('.tc-dist').forEach((i) => { if (i.value !== '') dist[i.dataset.place] = parseFloat(i.value); });
       const kmOf = (pl) => dist[pl] != null ? dist[pl] : presetFor(pl);
@@ -706,19 +740,24 @@ async function loadOfficerExtras() {
         const d = await api('/practices/' + pr.id + '/detail');
         for (const drvId of Object.keys(d.allocation || {})) {
           const m = members.find((x) => x.id === drvId); if (!m) continue;
-          const e = per[drvId] || (per[drvId] = { member: m, trips: 0, places: {}, cost: 0, noDist: false });
+          const e = per[drvId] || (per[drvId] = { member: m, trips: 0, places: {}, cost: 0, noDist: false, noPrice: false });
           e.trips++; e.places[pr.place] = (e.places[pr.place] || 0) + 1;
           const km = kmOf(pr.place);
           if (km == null) { e.noDist = true; continue; }
           const rf = realFuelOf(m);
-          if (rf > 0) e.cost += (km / rf) * gas;
+          if (rf > 0) {
+            const price = priceOf(m);
+            if (price > 0) e.cost += (km / rf) * price;
+            else e.noPrice = true;
+          }
         }
       }
+      const computable = (r) => realFuelOf(r.member) > 0 && !r.noPrice;
       const rows = Object.values(per).sort((a, b) => b.cost - a.cost);
-      const total = rows.reduce((a, r) => a + (realFuelOf(r.member) > 0 ? Math.ceil(r.cost) : 0), 0);
+      const total = rows.reduce((a, r) => a + (computable(r) ? Math.ceil(r.cost) : 0), 0);
       $('#tcResult').innerHTML = rows.length ? '<table><tr><th>名前</th><th>車出し回数</th><th>行き先</th><th>燃費（カタログ→実燃費）</th><th>交通費</th></tr>' +
-        rows.map((r) => `<tr><td>${esc(r.member.name)}</td><td>${r.trips}回</td><td>${Object.entries(r.places).map(([k, v]) => `${esc(k)}×${v}`).join('、')}</td><td>${r.member.catalogFuel ? `カタログ${r.member.catalogFuel}→実燃費${realFuelOf(r.member)}km/L` : '未登録'}</td><td>${realFuelOf(r.member) > 0 ? Math.ceil(r.cost).toLocaleString() + '円' : '計算不可'}${r.noDist ? '（距離未設定の体育館あり）' : ''}</td></tr>`).join('') +
-        `</table><p class="meta">合計：${total.toLocaleString()}円（ガソリン価格 ${gas}円/L で計算）</p>` : '<p class="meta">その月に車出しの記録がありません</p>';
+        rows.map((r) => `<tr><td>${esc(r.member.name)}</td><td>${r.trips}回</td><td>${Object.entries(r.places).map(([k, v]) => `${esc(k)}×${v}`).join('、')}</td><td>${r.member.catalogFuel ? `カタログ${r.member.catalogFuel}→実燃費${realFuelOf(r.member)}km/L` : '未登録'}（${r.member.fuelType === 'high' ? 'ハイオク' : 'レギュラー'}）</td><td>${computable(r) ? Math.ceil(r.cost).toLocaleString() + '円' : '計算不可'}${r.noPrice ? `（${r.member.fuelType === 'high' ? 'ハイオク' : 'レギュラー'}価格未入力）` : ''}${r.noDist ? '（距離未設定の体育館あり）' : ''}</td></tr>`).join('') +
+        `</table><p class="meta">合計：${total.toLocaleString()}円（レギュラー ${prices.regular > 0 ? prices.regular : '未入力'}円/L・ハイオク ${prices.high > 0 ? prices.high : '未入力'}円/L で計算）</p>` : '<p class="meta">その月に車出しの記録がありません</p>';
     };
   }
   // 変更の数一覧
@@ -752,7 +791,9 @@ async function loadOfficerExtras() {
     <p class="meta">${esc(m.name)}（${m.role === 'officer' ? '幹部' : '部員'}・${esc(m.grade || '')}）
     <select data-grade="${m.id}">${[1,2,3,4,5,6].map((g) => `<option value="${g}年" ${m.grade === g + '年' ? 'selected' : ''}>${g}年</option>`).join('')}</select>
     <button class="sub" data-role="${m.id}" data-to="${m.role === 'officer' ? 'member' : 'officer'}">${m.role === 'officer' ? '部員にする' : '幹部にする'}</button>
-    <br>カタログ燃費：<input type="number" data-fuel="${m.id}" min="0" step="0.1" value="${m.catalogFuel ?? ''}" style="width:76px"> km/L <button class="sub" data-fuelsave="${m.id}">燃費を保存</button></p>`).join('');
+    <br>カタログ燃費：<input type="number" data-fuel="${m.id}" min="0" step="0.1" value="${m.catalogFuel ?? ''}" style="width:76px"> km/L
+    燃料：<select data-fueltype="${m.id}"><option value="regular" ${m.fuelType !== 'high' ? 'selected' : ''}>レギュラー</option><option value="high" ${m.fuelType === 'high' ? 'selected' : ''}>ハイオク</option></select>
+    <button class="sub" data-fuelsave="${m.id}">燃費を保存</button></p>`).join('');
   const rs = $('#roleSearch');
   if (rs && !rs.dataset.wired) { rs.dataset.wired = '1'; rs.oninput = () => loadOfficerExtras(); }
   document.querySelectorAll('[data-grade]').forEach((s) => s.onchange = async () => {
@@ -761,15 +802,16 @@ async function loadOfficerExtras() {
     } catch (e) { alert(e.message); }
   });
   document.querySelectorAll('[data-role]').forEach((b) => b.onclick = async () => {
-    try { let pw = '';
-      if (b.dataset.to === 'officer') { pw = prompt('幹部用パスワードを設定してください（4文字以上、その人に伝えてください）') || ''; if (!pw) return; }
-      await api('/members/role', { method: 'POST', body: JSON.stringify({ memberId: b.dataset.role, role: b.dataset.to, password: pw }) });
+    try {
+      // 幹部パスワードは全幹部共通なので、昇格時に個人パスワードの設定は不要（共通パスワードでログインできる）
+      await api('/members/role', { method: 'POST', body: JSON.stringify({ memberId: b.dataset.role, role: b.dataset.to }) });
       const m = await api('/members'); members = m.members; loadOfficerExtras();
     } catch (e) { alert(e.message); }
   });
   document.querySelectorAll('[data-fuelsave]').forEach((b) => b.onclick = async () => {
     const inp = document.querySelector(`[data-fuel="${b.dataset.fuelsave}"]`);
-    try { await api('/members/fuel', { method: 'POST', body: JSON.stringify({ memberId: b.dataset.fuelsave, catalogFuel: inp && inp.value !== '' ? parseFloat(inp.value) : '' }) });
+    const tsel = document.querySelector(`[data-fueltype="${b.dataset.fuelsave}"]`);
+    try { await api('/members/fuel', { method: 'POST', body: JSON.stringify({ memberId: b.dataset.fuelsave, catalogFuel: inp && inp.value !== '' ? parseFloat(inp.value) : '', fuelType: tsel ? tsel.value : 'regular' }) });
       const m = await api('/members'); members = m.members; loadOfficerExtras();
     } catch (e) { alert(e.message); }
   });
@@ -786,11 +828,17 @@ $('#dlSave').onclick = async () => {
     $('#dlMsg').textContent = '保存しました'; refresh();
   } catch (e) { $('#dlMsg').textContent = e.message; }
 };
+$('#opwSave').onclick = async () => {
+  try { await api('/settings/officer-password', { method: 'POST', body: JSON.stringify({ currentPassword: $('#opwCurrent').value, newPassword: $('#opwNew').value }) });
+    $('#opwMsg').textContent = '変更しました。新しいパスワードが全幹部に有効です';
+    $('#opwCurrent').value = ''; $('#opwNew').value = '';
+  } catch (e) { $('#opwMsg').textContent = e.message; }
+};
 
 // --- 幹部メニューをアコーディオン化（タイトルだけ表示し、押すと広がる） ---
 (() => {
   const tab = document.querySelector('#tab-officer');
-  const order = ['変更リクエスト', '車割', '出席表', '色ごと', '練習を登録', '回答期限', '変更回数', '交通費', '役割'];
+  const order = ['変更リクエスト', '車割', '出席表', '色ごと', '練習を登録', '回答期限', '変更回数', '交通費', '役割', '幹部パスワード'];
   const cards = Array.from(tab.querySelectorAll('.card'));
   cards.sort((a, b) => {
     const ia = order.findIndex((k) => (a.querySelector('h2') || {}).textContent?.includes(k));
