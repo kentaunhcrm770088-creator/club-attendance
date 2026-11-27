@@ -49,10 +49,10 @@ function publicSettings() {
   return { gymDistances: data.settings.gymDistances || {}, gasPrices: data.settings.gasPrices || {} };
 }
 
-// --- gogo.gs からのガソリン価格自動取得 ---
-// 茨城県（pref=8）の価格推移ページには、チャート用JSONが
-// x-init="createChart(..., JSON.parse('...'))" の形で埋め込まれている。
-// mode=0 がレギュラー、mode=1 がハイオク。データセット「現金価格（茨城県平均）」の最新値を取る。
+// --- ガソリン価格の自動取得 ---
+// 第1ソース：oilstock.nextlabs.jp の茨城県ページ（資源エネルギー庁「石油製品価格調査」の
+// 都道府県別公表値、週次更新・静的HTML）。「要点」サマリーから最新値を取る。
+// 第2ソース：gogo.gs（本番サーバーからは取得できないことがあるためフォールバック）。
 function fetchText(url, redirects = 3) {
   return new Promise((resolve, reject) => {
     const req = https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36', 'Accept-Language': 'ja' } }, (resp) => {
@@ -96,6 +96,31 @@ function extractGogoIbarakiPrice(html) {
   const v = ds.data[lastLabel];
   if (typeof v !== 'number') return null;
   return { price: v, date: lastLabel };
+}
+// oilstock.nextlabs.jp の茨城県ページから最新の価格を取り出す。
+// 「要点」セクション（aria-labelledby="gasoline-prefecture-summary-heading"）の中に
+// <dt>レギュラー（1Lあたり）</dt><dd>166.1円</dd> の形で最新調査の値が入っている。
+// セクション内の値だけを対象にし、週次表の過去値や全国平均は拾わない。
+// 調査日は同じセクション内の <time datetime="YYYY-MM-DD"> から取る。
+function extractOilstockIbarakiPrice(html) {
+  const anchor = html.indexOf('gasoline-prefecture-summary-heading');
+  if (anchor < 0) return null;
+  const end = html.indexOf('</section>', anchor);
+  const sec = end > anchor ? html.slice(anchor, end) : html.slice(anchor, anchor + 12000);
+  const priceOf = (label) => {
+    const m = sec.match(new RegExp(label + '（1Lあたり）</dt>\\s*<dd[^>]*>\\s*([0-9]+(?:\\.[0-9]+)?)\\s*円'));
+    return m ? parseFloat(m[1]) : null;
+  };
+  const regular = priceOf('レギュラー');
+  const high = priceOf('ハイオク');
+  if (regular == null || high == null) return null;
+  // 妥当性チェック：どちらも 100〜250 円で、ハイオクのほうが高いこと
+  const sane = (v) => v >= 100 && v <= 250;
+  if (!sane(regular) || !sane(high) || !(high > regular)) return null;
+  let date = null;
+  const tm = sec.match(/<time[^>]*datetime="(\d{4})-(\d{2})-(\d{2})"/);
+  if (tm) date = `${tm[1]}年${parseInt(tm[2])}月${parseInt(tm[3])}日`;
+  return { regular, high, date };
 }
 function newId() { return crypto.randomUUID(); }
 function todayJST() {
@@ -300,9 +325,16 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true });
     }
 
-    // --- ガソリン価格の自動取得（gogo.gs 茨城県平均、幹部専用） ---
+    // --- ガソリン価格の自動取得（幹部専用） ---
+    // 第1ソース：oilstock.nextlabs.jp（資源エネルギー庁「石油製品価格調査」の茨城県公表値）
+    // 第2ソース：gogo.gs 茨城県平均（海外サーバーからは取得できないことがある）
     if (p === '/api/gas-prices' && req.method === 'GET') {
       if (me.role !== 'officer') return sendJson(res, 403, { error: '価格の自動取得は幹部だけができます' });
+      try {
+        const html = await fetchText('https://oilstock.nextlabs.jp/gasoline/ibaraki/');
+        const o = extractOilstockIbarakiPrice(html);
+        if (o) return sendJson(res, 200, { regular: o.regular, high: o.high, date: o.date, source: '資源エネルギー庁 石油製品価格調査（oilstock.nextlabs.jp）' });
+      } catch { /* 第2ソースへ */ }
       try {
         const [regHtml, highHtml] = await Promise.all([
           fetchText('https://gogo.gs/chart/pref/8?mode=0&range=0'),

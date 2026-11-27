@@ -49,7 +49,7 @@ label { font-size: 13px; color: #444;}
 <div class="err" id="authErr"></div>
 <button class="primary" id="authBtn">ログイン</button>
 <p class="meta" style="text-align:center"><a href="#" id="authToggle">初めての方はこちら（新規登録）</a></p>
-<p class="meta" style="text-align:center">アプリ版 2026-11-27-7</p>
+<p class="meta" style="text-align:center">アプリ版 2026-11-28-8</p>
 </div>
 </section>
 
@@ -123,7 +123,7 @@ label { font-size: 13px; color: #444;}
 <label>対象の月</label><input type="month" id="tcMonth">
 <label>レギュラー価格（円/L）</label><input type="number" id="tcGasRegular" min="0" step="0.1" placeholder="例：170">
 <label>ハイオク価格（円/L）</label><input type="number" id="tcGasHigh" min="0" step="0.1" placeholder="例：181">
-<button class="sub" id="tcFetchGas">価格を自動取得（gogo.gs 茨城県平均）</button>
+<button class="sub" id="tcFetchGas">価格を自動取得（茨城県の平均価格）</button>
 <p class="meta" id="tcGasNote"></p>
 <div id="tcGyms"></div>
 <p class="meta">距離は主な体育館のプリセット（往復km）が初期値として入ります。違う場合は直して保存してください。燃費はカタログ燃費の半分（小数切り捨て）を実燃費として計算し、金額は切り上げです。各人の金額は、その人の燃料種別（レギュラー／ハイオク）の価格で計算します。カタログ燃費と燃料種別は下の「部員の役割・学年・燃費を変更」で入力してください。</p>
@@ -707,8 +707,13 @@ async function loadOfficerExtras() {
         const g = await api('/gas-prices');
         if (g.regular != null) $('#tcGasRegular').value = g.regular;
         if (g.high != null) $('#tcGasHigh').value = g.high;
-        const dl = g.date ? String(g.date).replace('/', '月') + '日時点' : '';
-        $('#tcGasNote').textContent = `gogo.gs 茨城県平均${dl ? '（' + dl + '）' : ''}：レギュラー ${g.regular}円/L・ハイオク ${g.high}円/L`;
+        let dl = '';
+        if (g.date) {
+          const d = String(g.date);
+          dl = /^\d{1,2}\/\d{1,2}$/.test(d) ? d.replace('/', '月') + '日時点' : d + '時点';
+        }
+        const src = g.source || '自動取得';
+        $('#tcGasNote').textContent = `${src}${dl ? '（' + dl + '）' : ''}：レギュラー ${g.regular}円/L・ハイオク ${g.high}円/L`;
         $('#tcMsg').textContent = '価格を取得しました。「距離と価格を保存」を押すと保存されます';
       } catch (e) {
         $('#tcMsg').textContent = '自動取得できませんでした。手入力してください';
